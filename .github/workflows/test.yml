@@ -1,0 +1,28 @@
+# テスト。写したライブラリが vca-guide と同じかも確かめるため、vca-guide を隣のフォルダに取り出す
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        node: ['22', '24']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: vca-hub
+      - uses: actions/checkout@v4
+        with:
+          repository: NrivYuki/vca-guide
+          path: vca-guide
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: テスト
+        working-directory: vca-hub
+        run: npm test

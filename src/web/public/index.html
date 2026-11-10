@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vca-hub</title>
+<style>
+  /* 見た目の方針: 角は立てる・影は使わない・区切りは罫線・色はアクセント 1 色(vca-lens-simulator・vca-ptn-converter と同じ) */
+  :root {
+    /* 書体: 本文は BIZ UDPゴシック、数値と VCA のテキストは等幅の BIZ UDゴシック。PC に入っているものを使う
+       (外へ読みに行かない。Web フォント版の BIZ UDゴシックは、小さい字でハイフンと下線が消えることがあり、名前を見誤るため) */
+    --font: "BIZ UDPゴシック", "BIZ UDPGothic", system-ui, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    --mono: "BIZ UDゴシック", "BIZ UDGothic", ui-monospace, Consolas, monospace;
+    --bg: #ffffff; --panel: #ffffff; --band: #f2f3f4; --ink: #1a1a1a; --ink-2: #3a3f44; --muted: #555b61;
+    --line: #c8ccd0; --line-light: #dde0e3;
+    --accent: #1f3a5f; --accent-ink: #ffffff; --link-hover: #0e1f36;
+    --warn-bg: #fff6df; --warn-ink: #5c4300; --err-bg: #fde8e8; --err-ink: #7a1a1a;
+    --stage: #e4e7ea; --sel: #e8edf3;
+    --bar: #3b3f45; --bar-2: #2a2d32; --bar-ink: #ffffff; --bar-muted: #c9cdd2; --tab: #e6e8ea;
+    --side-w: 400px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --panel: #14171c; --band: #1d2127; --ink: #e6e8eb; --ink-2: #c4c9cf; --muted: #9aa1a9;
+      --line: #3a4048; --line-light: #2c3138;
+      --accent: #8fb0d6; --accent-ink: #0e1520; --link-hover: #b9cfe8;
+      --warn-bg: #352b10; --warn-ink: #f0d58f; --err-bg: #3a1c1c; --err-ink: #f2b6b6;
+      --stage: #0f1215; --sel: #1e2833;
+      --bar: #22262c; --bar-2: #101215; --bar-ink: #e6e8eb; --bar-muted: #9aa1a9; --tab: #22262c;
+    }
+  }
+  * { box-sizing: border-box; border-radius: 0; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 14px/1.7 var(--font); }
+  .mono, textarea, code { font-family: var(--mono); }
+
+  /* 上の帯: 左に名前、右に待ち受けと件数 */
+  header.top { display: flex; align-items: stretch; background: var(--bar); color: var(--bar-ink); border-bottom: 1px solid var(--bar-2); }
+  header.top h1 { flex: none; width: var(--side-w); margin: 0; padding: 8px 16px; font-size: 15px; letter-spacing: 0.04em; background: var(--bar-2); }
+  header.top .spec { flex: 1; min-width: 0; padding: 8px 16px; font-size: 13px; color: var(--bar-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center; }
+  header.top .spec.down { color: var(--bar-ink); background: #7a1a1a; align-self: stretch; }
+
+  .app { flex: 1; display: grid; grid-template-columns: var(--side-w) 1fr; min-height: 0; }
+
+  /* 左: タブ。選んだタブだけ下の面とつながる */
+  aside.side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--bg); }
+  .tabs { display: flex; flex: none; padding: 8px 8px 0; background: var(--band); border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 1; padding: 6px 0; margin-right: -1px; margin-bottom: -1px; font-size: 13px; color: var(--ink-2); background: var(--tab); border: 1px solid var(--line); }
+  .tabs button:hover { color: var(--ink); border-color: var(--line); background: var(--bg); }
+  .tabs button[aria-selected=true] { position: relative; color: var(--ink); font-weight: 700; background: var(--bg); border-top: 3px solid var(--accent); border-bottom-color: var(--bg); padding-top: 4px; }
+  .tabs .count { font: 400 11px var(--mono); color: var(--muted); margin-left: 4px; }
+  .panes { flex: 1; min-height: 0; overflow: auto; }
+  .pane { padding: 12px 16px 32px; }
+  .pane.flush { padding: 0 0 32px; }
+
+  h2 { font-size: 15px; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--ink); }
+  h3 { font-size: 13px; margin: 16px 0 4px; color: var(--muted); }
+  button, select, input { font: inherit; }
+  button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { border-color: var(--ink); }
+  button:disabled { color: var(--line); cursor: default; }
+  button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.on:disabled { background: var(--band); color: var(--muted); border-color: var(--line); }
+  input[type=text], select { width: 100%; padding: 3px 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  input[type=text] { font-family: var(--mono); }
+  input[type=text]:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .seg { display: inline-flex; }
+  .seg button { margin-left: -1px; }
+  .seg button:first-child { margin-left: 0; }
+
+  /* 受信の一覧: 左に小さな玉型、真ん中に名前と受け取った JOB、右に状態 */
+  .filter { display: flex; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 1; }
+  .filter button { flex: 1; font-size: 12px; padding: 3px 0; }
+  .jobs { list-style: none; margin: 0; padding: 0; }
+  .jobs li { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center; padding: 7px 16px 7px 13px; border-bottom: 1px solid var(--line-light); border-left: 3px solid transparent; cursor: pointer; }
+  .jobs li:hover { background: var(--band); }
+  .jobs li.sel { background: var(--sel); border-left-color: var(--accent); }
+  .jobs .th { width: 64px; height: 30px; display: block; }
+  .jobs .nm { min-width: 0; line-height: 1.6; }
+  .jobs .nm b { font: 700 13.5px var(--mono); }
+  .jobs .nm b.none { font: 400 13px var(--font); color: var(--muted); }
+  .jobs .nm .sub { display: block; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .jobs .right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .empty { padding: 24px 16px; color: var(--muted); font-size: 13px; }
+
+  /* 状態の札: 色だけでなく、地と枠の形でも見分けられるようにする */
+  .st { font-size: 11.5px; line-height: 1.5; padding: 0 6px; border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+  .st.unnamed { border-style: dashed; color: var(--muted); }
+  .st.queued { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .st.sent { background: var(--band); }
+  .mk { font-size: 11px; line-height: 1.5; padding: 0 5px; white-space: nowrap; }
+  .mk.e { background: var(--err-bg); color: var(--err-ink); border: 2px solid currentColor; }
+  .mk.w { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid currentColor; }
+
+  /* 表 */
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+  th, td { padding: 3px 6px; text-align: left; vertical-align: top; }
+  thead th { color: var(--muted); font-weight: 400; font-size: 12px; background: var(--band); border-bottom: 1px solid var(--line); }
+  tbody td { border-bottom: 1px solid var(--line-light); }
+  table.kv th { width: 9em; color: var(--muted); font-weight: 400; font-size: 12.5px; border-bottom: 1px solid var(--line-light); }
+  table.rec td:first-child { width: 7em; font-family: var(--mono); color: var(--ink-2); }
+  table.rec td:last-child { font-family: var(--mono); word-break: break-all; }
+
+  /* 送受信の記録 */
+  .log { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+  .log li { padding: 5px 16px; border-bottom: 1px solid var(--line-light); line-height: 1.5; }
+  .log li .t { font: 11.5px var(--mono); color: var(--muted); margin-right: 8px; }
+  .log li .ev { font-weight: 700; }
+  .log li .d { display: block; color: var(--muted); font-size: 11.5px; word-break: break-all; }
+  .log li.warn { background: var(--warn-bg); color: var(--warn-ink); }
+  .log li.error { background: var(--err-bg); color: var(--err-ink); border-left: 3px solid currentColor; padding-left: 13px; }
+  .log li.warn .d, .log li.error .d, .log li.warn .t, .log li.error .t { color: inherit; }
+
+  /* 補足の囲み(このツールの前提) */
+  .about { margin-top: 20px; padding: 10px 12px; border: 1px solid var(--line); background: var(--band); font-size: 12.5px; color: var(--ink-2); }
+  .about b { display: block; margin-bottom: 4px; color: var(--ink); }
+  .about p { margin: 0 0 6px; }
+
+  /* 右: 道具の帯、玉型の面、知らせ、下の帯 */
+  .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--band); }
+  .toolbar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+  .toolbar label { display: inline-flex; gap: 4px; align-items: center; color: var(--ink-2); font-size: 13px; }
+  .toolbar .title { margin-left: auto; font: 700 13px var(--mono); color: var(--ink-2); padding-right: 4px; }
+  .view { position: relative; flex: 1; min-height: 0; background: var(--stage); }
+  .view svg.plot { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .view .hint { position: absolute; top: 10px; left: 10px; z-index: 1; padding: 2px 10px; font-size: 12.5px; color: var(--ink-2); background: var(--bg); border: 1px solid var(--line); }
+  .view .placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+  .view .sheet { position: absolute; inset: 0; overflow: auto; padding: 14px 18px 24px; background: var(--bg); }
+  .view .sheet h3:first-child { margin-top: 0; }
+  .view .sheet.frame { padding: 0; }
+  .view iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  #views button.ext { font-style: normal; border-top: 2px solid var(--muted); }
+  .view textarea { width: 100%; height: calc(100% - 4px); resize: none; font-size: 12px; line-height: 1.45; background: var(--band); color: var(--ink); border: 1px solid var(--line); padding: 8px; }
+  svg .outline { fill: var(--panel); stroke: var(--ink); stroke-width: 1.6; }
+  svg .box { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
+  svg .axis { stroke: var(--muted); stroke-width: 1; }
+  svg .eye { fill: var(--ink); font-family: var(--font); font-weight: 700; }
+  svg .dim { fill: var(--muted); font-family: var(--mono); }
+  svg.th .outline { stroke-width: 1; }
+
+  /* 知らせ: 注意は色付きの地、エラーは太い枠、補足は枠だけ */
+  .msgs { list-style: none; padding: 0; margin: 0; font-size: 12.5px; }
+  .msgs li { padding: 4px 10px; border: 1px solid var(--line); }
+  .msgs li + li { margin-top: 4px; }
+  .msgs li.w { background: var(--warn-bg); color: var(--warn-ink); border-color: currentColor; }
+  .msgs li.e { background: var(--err-bg); color: var(--err-ink); border: 2px solid currentColor; }
+  .msgs li.i { color: var(--ink-2); }
+  .msgs li b { margin-right: 6px; }
+  .stage > .msgs { flex: none; padding: 8px 10px; border-top: 1px solid var(--line); background: var(--bg); }
+  .stage > .msgs:empty { display: none; }
+
+  /* 下の帯: 左に名前と寸法、右に送り出すボタン(絵と文字を縦に並べる) */
+  .bottombar { display: flex; flex: none; align-items: stretch; border-top: 1px solid var(--line); background: var(--bg); }
+  .bottombar .sum { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 20px; padding: 6px 14px; font-size: 13px; color: var(--ink-2); }
+  .bottombar .sum b { font: 700 14px var(--mono); color: var(--ink); }
+  .bottombar .sum .unit { color: var(--muted); font-size: 12px; }
+  .bottombar .actions { display: flex; flex: none; }
+  .bottombar .actions button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 76px; padding: 6px 0; font-size: 11px; color: var(--ink-2); background: var(--bg); border: 0; border-left: 1px solid var(--line); }
+  .bottombar .actions button:hover:not(:disabled) { color: var(--ink); background: var(--band); }
+  .bottombar .actions button:disabled { color: var(--line); }
+  .bottombar .actions button.danger:hover:not(:disabled) { color: var(--err-ink); background: var(--err-bg); }
+  .bottombar .actions svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+
+  /* 確認の画面: 角を立て、影の代わりに枠と上の色の線 */
+  dialog { padding: 0; border: 1px solid var(--line); border-top: 3px solid var(--accent); background: var(--bg); color: var(--ink); width: min(520px, calc(100% - 32px)); }
+  dialog::backdrop { background: rgba(20, 23, 28, 0.45); }
+  dialog .dh { padding: 10px 16px 0; }
+  dialog .db { padding: 0 16px 12px; }
+  dialog .df { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 16px; background: var(--band); border-top: 1px solid var(--line); }
+  dialog .df button { min-width: 7em; }
+  dialog p { margin: 6px 0; font-size: 13px; color: var(--ink-2); }
+  .f { display: grid; grid-template-columns: 8.5em 1fr; gap: 6px; align-items: center; margin: 8px 0; }
+  .f > span { color: var(--muted); font-size: 13px; }
+  button.small { font-size: 12px; padding: 1px 8px; }
+  dialog .f + .f { margin-top: -2px; }
+  #confirmName { font-size: 15px; padding: 4px 8px; }
+  .dlg-plot { position: relative; height: 150px; margin: 8px 0; background: var(--stage); border: 1px solid var(--line); }
+  .dlg-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  dialog .msgs { margin: 8px 0; }
+  .check { display: flex; gap: 6px; align-items: center; margin-top: 10px; padding: 6px 10px; border: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+  .check:has(input:checked) { border-color: var(--accent); background: var(--sel); }
+
+  @media (max-width: 900px) {
+    body { display: block; }
+    .app { grid-template-columns: 1fr; }
+    aside.side { border-right: 0; border-bottom: 1px solid var(--line); }
+    .panes { max-height: 50vh; }
+    header.top { flex-wrap: wrap; }
+    header.top h1 { width: 100%; }
+    header.top .spec { white-space: normal; }
+    .view { min-height: 340px; }
+    .bottombar { flex-wrap: wrap; }
+    .bottombar .actions { flex: 1 1 100%; border-top: 1px solid var(--line); }
+    .bottombar .actions button { flex: 1; width: auto; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>vca-hub</h1>
+  <div class="spec" id="spec">読み込み中…</div>
+</header>
+
+<div class="app">
+  <aside class="side">
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="list" aria-selected="true">受信<span class="count" id="countAll"></span></button>
+      <button role="tab" data-tab="log" aria-selected="false">記録</button>
+      <button role="tab" data-tab="conf" aria-selected="false">設定</button>
+    </div>
+    <div class="panes">
+      <section class="pane flush" data-pane="list">
+        <div class="filter seg" id="filter">
+          <button data-f="all" class="on">すべて</button>
+          <button data-f="unnamed">名前なし</button>
+          <button data-f="queued">送信待ち</button>
+          <button data-f="sent">送信済み</button>
+        </div>
+        <ul class="jobs" id="list"></ul>
+        <div class="empty" id="listEmpty" hidden></div>
+      </section>
+      <section class="pane flush" data-pane="log" hidden>
+        <ul class="log" id="log"></ul>
+      </section>
+      <section class="pane" data-pane="conf" hidden>
+        <h2>設定</h2>
+        <table class="kv"><tbody id="conf"></tbody></table>
+        <h3>初期化した機器</h3>
+        <table><thead><tr><th>要求 ID</th><th>機器</th><th>メーカー・機種</th><th>相手</th></tr></thead><tbody id="devices"></tbody></table>
+        <div class="about">
+          <b>このツールの前提</b>
+          <p>受け取った VCA のデータを、この PC の保存先に残し、加工機・送り先・共有フォルダへ中継します。データの中身(レコードの値)は変えません。</p>
+          <p>受け取ったデータは、名前を付けるまでどこへも渡しません。名前は、加工機・送り先・共有フォルダへのジョブ番号になります。加工機は、送信待ちのデータを名前で求めて受け取ります。同じ名前で送信待ちにできるのは 1 件だけです。</p>
+          <p>拡張を入れると、送るときに拡張が項目を足したり変えたりします(加工条件、メーカー別の項目など)。何をするかは、詳細と送る前の確認に「拡張」として出ます。受け取った中身(保存したデータ)は、拡張も変えません。</p>
+          <p>設定は、vca-hub のフォルダの config.json で変えます(変えたら起動し直します)。使う拡張と、口ごとの通信方式(VCA かメーカーの通信か)も、ここで選びます。</p>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="toolbar">
+      <div class="seg" id="views">
+        <button data-view="shape" class="on">玉型</button>
+        <button data-view="info">内容</button>
+        <button data-view="raw">原文</button>
+      </div>
+      <span class="sep"></span>
+      <label><input type="checkbox" id="showGuide" checked>箱と中心</label>
+      <span class="title" id="title"></span>
+    </div>
+    <div class="view" id="view">
+      <div data-view-pane="shape">
+        <div class="hint">正面から見た向き(右眼を左側に表示)</div>
+        <svg class="plot" id="plot" aria-label="玉型"></svg>
+      </div>
+      <div class="sheet" data-view-pane="info" hidden>
+        <h3>受け取ったときの情報</h3>
+        <table class="kv"><tbody id="kv"></tbody></table>
+        <h3>レコード</h3>
+        <table class="rec"><tbody id="records"></tbody></table>
+      </div>
+      <div class="sheet" data-view-pane="raw" hidden><textarea id="raw" readonly spellcheck="false"></textarea></div>
+      <div class="placeholder" id="placeholder">一覧から選ぶと、ここに玉型が表示されます</div>
+    </div>
+    <ul class="msgs" id="issues"></ul>
+    <div class="bottombar">
+      <div class="sum" id="sum"><span>一覧から選ぶと、ここに名前と寸法が出ます</span></div>
+      <div class="actions">
+        <button id="btnQueue" disabled title="加工機向けに送信待ちにする"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 13h4l1.5 3h5l1.5-3h4 M4 13l2.5-8h11l2.5 8v6H4z"/></svg><span>送信待ち</span></button>
+        <button id="btnUnqueue" disabled title="送信待ちを取り消す"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 13h4l1.5 3h5l1.5-3h4 M4 13l2.5-8h11l2.5 8v6H4z M10 7.5l4 4 M14 7.5l-4 4"/></svg><span>取り消す</span></button>
+        <button id="btnExport" disabled title="共有フォルダへ書き出す"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 6h5l2 2h7v11H5z M12 11v5 M9.5 13.5L12 16l2.5-2.5"/></svg><span>書き出し</span></button>
+        <button id="btnSend" disabled title="送り先へ送る"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 11.5l16-7-6 16-2.5-6.5z M11.5 14l8.5-9.5"/></svg><span>送る</span></button>
+        <button id="btnDelete" class="danger" disabled title="受信データを削除する"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 7h14 M9.5 7V4.5h5V7 M7 7l1 13h8l1-13 M10.5 10.5v6 M13.5 10.5v6"/></svg><span>削除</span></button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<dialog id="confirm">
+  <div class="dh"><h2 id="confirmTitle">送る前の確認</h2></div>
+  <div class="db">
+    <p>加工の取り違えを防ぐため、名前を付け、次の内容を確かめてください。</p>
+    <div class="f"><span>名前(ジョブ番号)</span>
+      <input type="text" id="confirmName" maxlength="40" autocomplete="off"></div>
+    <div class="f"><span></span><div><button id="confirmUseJob" type="button" class="small">受け取った JOB を使う</button></div></div>
+    <div class="f" id="confirmDestRow"><span>送り先</span><select id="confirmDest"></select></div>
+    <table class="kv"><tbody id="confirmKv"></tbody></table>
+    <div class="dlg-plot"><svg id="confirmPlot" aria-label="玉型"></svg></div>
+    <ul class="msgs" id="confirmMsgs"></ul>
+    <label class="check" id="replaceRow" hidden><input type="checkbox" id="confirmReplace"> 前のものを送信待ちから外して、こちらを送信待ちにする</label>
+    <label class="check"><input type="checkbox" id="confirmCheck"> 名前・左右・玉型の形を確かめました</label>
+  </div>
+  <div class="df">
+    <button id="confirmCancel" type="button">やめる</button>
+    <button class="on" id="confirmOk" type="button" disabled>送信待ちにする</button>
+  </div>
+</dialog>
+
+<dialog id="ask">
+  <div class="dh"><h2 id="askTitle"></h2></div>
+  <div class="db"><p id="askText"></p></div>
+  <div class="df">
+    <button id="askCancel" type="button">やめる</button>
+    <button class="on" id="askOk" type="button"></button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtTime = iso => new Date(iso).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const num = (v, d = 2) => (v == null || v === '' || !Number.isFinite(Number(v)) ? '-' : Number(v).toFixed(d));
+const EYE = { R: '右眼', L: '左眼' };
+
+let status = { destinations: [], exportDir: null };
+let entries = [], selected = null, current = null, filter = 'all', view = 'shape', lastListJson = '';
+const shapes = new Map();   // id → 玉型(一覧の小さな図に使う。詳細を取ったものから順に入る)
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'X-VCA-Hub': '1', ...(opts.headers || {}) } });
+  const body = await res.json();
+  if (!res.ok) throw Object.assign(new Error(body.error || res.status), { body });
+  return body;
+}
+
+// ---- 状態 ----
+const STATUS = { received: '未送信', queued: '送信待ち', sent: '送信済み' };
+const unnamed = e => e.status === 'received' && !e.name;
+const statusText = e => (unnamed(e) ? '名前なし' : STATUS[e.status] || e.status);
+const statusClass = e => (unnamed(e) ? 'unnamed' : e.status);
+function markHtml(check) {
+  if (!check) return '';
+  if (check.blockers.length) return '<span class="mk e">送信できません</span>';
+  if (check.notices.length) return '<span class="mk w">注意</span>';
+  return '';
+}
+/** 拡張からの説明(加工条件など。拡張が足したり変えたりする項目を、送る前に人が確かめられるように) */
+function extHtml(list) {
+  return (list || []).map(x => `<li class="i"><b>拡張 ${esc(x.title)}</b>${x.lines.map(esc).join(' / ')}</li>`).join('');
+}
+function issuesHtml(check) {
+  if (!check) return '';
+  return check.blockers.map(s => `<li class="e"><b>送信できません</b>${esc(s)}</li>`).join('') +
+    check.notices.map(s => `<li class="w"><b>注意</b>${esc(s)}(値は変えずにそのまま送ります)</li>`).join('');
+}
+
+// ---- 玉型の図: 正面から見た向き。右眼を左、左眼を右に、DBL の間をあけて並べる ----
+const SVGNS = 'http://www.w3.org/2000/svg';
+function bounds(pts) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  return { x0, x1, y0, y1, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+}
+/**
+ * svg に玉型を描く。traces は [{ eye, points(mm), hbox, vbox }]。
+ * o.guide: 箱と中心の線、o.labels: 眼と寸法の文字、o.dbl: 鼻幅(無ければ 18 mm の間をあける)、o.pad: 余白の割合
+ */
+function drawShapes(svg, traces, o = {}) {
+  const list = ['R', 'L'].map(eye => (traces || []).find(t => t.eye === eye && t.points && t.points.length > 2)).filter(Boolean);
+  svg.replaceChildren();
+  if (!list.length) return false;
+  const gap = Number.isFinite(o.dbl) ? o.dbl : 18;
+  const items = list.map(t => ({ t, b: bounds(t.points) }));
+  // 箱の中心の x: 2 つなら DBL をはさんで左右に、1 つなら真ん中
+  if (items.length === 2) {
+    items[0].ox = -(gap / 2 + items[0].b.w / 2);
+    items[1].ox = gap / 2 + items[1].b.w / 2;
+  } else items[0].ox = 0;
+  const left = Math.min(...items.map(i => i.ox - i.b.w / 2)), right = Math.max(...items.map(i => i.ox + i.b.w / 2));
+  const top = Math.max(...items.map(i => i.b.h / 2)), bottom = -top;
+  const labelH = o.labels ? 14 : 0;
+  const W = right - left, H = top - bottom + labelH, pad = (o.pad ?? 0.12) * Math.max(W, H);
+  const vb = [left - pad, -top - pad, W + pad * 2, H + pad * 2];
+  svg.setAttribute('viewBox', vb.map(v => v.toFixed(2)).join(' '));
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  // 文字と線の太さを画面の px で決める(図の大きさが変わっても同じに見えるように)
+  const pxPerMm = Math.min((svg.clientWidth || 300) / vb[2], (svg.clientHeight || 150) / vb[3]) || 4;
+  const px = v => v / pxPerMm;
+  const el = (name, attrs, parent = svg) => {
+    const n = document.createElementNS(SVGNS, name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    parent.appendChild(n);
+    return n;
+  };
+  for (const { t, b, ox } of items) {
+    const dx = ox - b.cx, dy = -b.cy;
+    const d = t.points.map((p, k) => `${k ? 'L' : 'M'}${(p[0] + dx).toFixed(3)},${(-(p[1] + dy)).toFixed(3)}`).join('') + 'Z';
+    if (o.guide) {
+      el('rect', { class: 'box', x: ox - b.w / 2, y: -b.h / 2, width: b.w, height: b.h, 'vector-effect': 'non-scaling-stroke' });
+      const ext = Math.max(b.w, b.h) * 0.08;
+      el('line', { class: 'axis', x1: ox - b.w / 2 - ext, x2: ox + b.w / 2 + ext, y1: 0, y2: 0, 'vector-effect': 'non-scaling-stroke' });
+      el('line', { class: 'axis', x1: ox, x2: ox, y1: -b.h / 2 - ext, y2: b.h / 2 + ext, 'vector-effect': 'non-scaling-stroke' });
+    }
+    el('path', { class: 'outline', d, 'vector-effect': 'non-scaling-stroke' });
+    if (o.labels) {
+      const y = top + px(22);
+      el('text', { class: 'eye', x: ox, y, 'text-anchor': 'middle', 'font-size': px(13) }).textContent = `${EYE[t.eye]}(${t.eye})`;
+      el('text', { class: 'dim', x: ox, y: y + px(17), 'text-anchor': 'middle', 'font-size': px(12) }).textContent =
+        `${num(t.hbox ?? b.w)} × ${num(t.vbox ?? b.h)} mm`;
+    }
+  }
+  return true;
+}
+const dblOf = e => {
+  const r = e && e.records && e.records.find(x => x.label === 'DBL');
+  return r ? Number(r.fields[0]) : NaN;
+};
+
+// ---- 上の帯 ----
+function renderSpec() {
+  const s = status, n = k => entries.filter(k).length;
+  const parts = [
+    `待ち受け ${s.remote ?? 'なし'}`,
+    `送り先 ${s.destinations.length ? s.destinations.join('・') : 'なし'}`,
+    `名前なし ${n(unnamed)} 件`, `送信待ち ${n(e => e.status === 'queued')} 件`, `全 ${entries.length} 件`,
+  ];
+  $('spec').textContent = parts.join(' / ');
+  $('spec').classList.remove('down');
+  $('countAll').textContent = entries.length || '';
+}
+
+// ---- 受信の一覧 ----
+const FILTERS = { all: () => true, unnamed, queued: e => e.status === 'queued', sent: e => e.status === 'sent' };
+const EMPTY = { all: 'まだ受信していません。', unnamed: '名前なしのデータはありません。', queued: '送信待ちのデータはありません。', sent: '送信済みのデータはありません。' };
+function renderList() {
+  const rows = entries.filter(FILTERS[filter]);
+  $('listEmpty').hidden = rows.length > 0;
+  $('listEmpty').textContent = EMPTY[filter];
+  $('list').innerHTML = rows.map(e => `
+    <li data-id="${esc(e.id)}" class="${e.id === selected ? 'sel' : ''}">
+      <svg class="th" data-th="${esc(e.id)}"></svg>
+      <span class="nm">${e.name ? `<b>${esc(e.name)}</b>` : '<b class="none">名前なし</b>'}
+        <span class="sub">JOB <span class="mono">${esc(e.job || 'なし')}</span> ・ ${esc((e.eyes || []).join('・') || '玉型なし')}</span>
+        <span class="sub">${esc(fmtTime(e.receivedAt))} ・ ${esc(e.peer)}</span></span>
+      <span class="right"><span class="st ${statusClass(e)}">${statusText(e)}</span>${markHtml(e.check)}</span>
+    </li>`).join('');
+  for (const li of $('list').children) li.onclick = () => select(li.dataset.id);
+  for (const svg of $('list').querySelectorAll('svg.th')) {
+    const t = shapes.get(svg.dataset.th);
+    if (t) drawShapes(svg, t.traces, { dbl: t.dbl, pad: 0.06 });
+  }
+}
+// 小さな図のために、まだ取っていないものの詳細を順に取る
+let filling = false;
+async function fillShapes() {
+  if (filling) return;
+  filling = true;
+  try {
+    for (const e of entries.slice(0, 100)) {
+      if (shapes.has(e.id)) continue;
+      try { const d = await api('/api/jobs/' + e.id); shapes.set(e.id, { traces: d.traces, dbl: dblOf(d) }); } catch { shapes.set(e.id, { traces: [] }); }
+      const svg = $('list').querySelector(`svg[data-th="${CSS.escape(e.id)}"]`);
+      if (svg) drawShapes(svg, shapes.get(e.id).traces, { dbl: shapes.get(e.id).dbl, pad: 0.06 });
+    }
+  } finally { filling = false; }
+}
+
+// ---- 選んだデータ ----
+async function select(id) {
+  selected = id;
+  for (const li of $('list').children) li.classList.toggle('sel', li.dataset.id === id);
+  try { current = await api('/api/jobs/' + id); } catch { current = null; }
+  renderDetail();
+}
+function renderDetail() {
+  const e = current;
+  $('placeholder').hidden = !!e;
+  $('placeholder').textContent = '一覧から選ぶと、ここに玉型が表示されます';
+  for (const id of ['btnQueue', 'btnUnqueue', 'btnExport', 'btnSend', 'btnDelete']) $(id).disabled = !e;
+  if (!e) {
+    $('plot').replaceChildren(); $('title').textContent = ''; $('issues').innerHTML = '';
+    $('sum').innerHTML = '<span>一覧から選ぶと、ここに名前と寸法が出ます</span>';
+    showView(view);
+    return;
+  }
+  shapes.set(e.id, { traces: e.traces, dbl: dblOf(e) });
+  $('title').textContent = e.name || `名前なし (JOB ${e.job || 'なし'})`;
+  if (view === 'shape' && !drawShapes($('plot'), e.traces, { guide: $('showGuide').checked, labels: true, dbl: dblOf(e) })) {
+    $('placeholder').hidden = false;
+    $('placeholder').textContent = '玉型のデータはありません';
+  }
+  const t = e.traces;
+  $('kv').innerHTML = [
+    ['名前', e.name || '名前なし'], ['受け取った JOB', e.job || 'なし'], ['状態', statusText(e)], ['受信日時', fmtTime(e.receivedAt)],
+    ['受信元', e.peer], ['要求の種類', e.type], ['CRC', e.crcOk === null ? 'なし' : e.crcOk ? '正しい' : '合わない'],
+    ['玉型', t.length ? t.map(x => `${EYE[x.eye] || x.eye} 形式 ${x.fmt}・${x.n} 点・${x.mode}${x.circ != null ? `・周長 ${num(x.circ)} mm` : ''}`).join('<br>') : 'なし'],
+    ['除いた個人情報', e.piiRemoved.length ? esc(e.piiRemoved.join('、')) : 'なし'],
+    ...(e.extensions || []).map(x => [`拡張 ${esc(x.title)}`, x.lines.map(esc).join('<br>')]),
+    ['送った記録', e.sent.length ? e.sent.map(s => `${esc(fmtTime(s.at))} ${esc(s.to)}`).join('<br>') : 'なし'],
+  ].map(([k, v]) => `<tr><th>${k}</th><td>${['玉型', '除いた個人情報', '送った記録'].includes(k) || k.startsWith('拡張 ') ? v : esc(v)}</td></tr>`).join('');
+  $('records').innerHTML = e.records.map(r => `<tr><td>${esc(r.label)}</td><td>${esc(r.fields.join(';'))}</td></tr>`).join('');
+  $('raw').value = e.text;
+  $('issues').innerHTML = issuesHtml(e.check) + extHtml(e.extensions);
+  const box = t.find(x => x.eye === 'R') || t[0];
+  const dbl = dblOf(e);
+  $('sum').innerHTML = [
+    `名前 <b>${esc(e.name || '名前なし')}</b>`,
+    `左右 <b>${esc(t.map(x => x.eye).join('・') || '-')}</b>`,
+    box ? `玉型 <b>${num(box.hbox)} × ${num(box.vbox)}</b> <span class="unit">mm</span>` : '',
+    Number.isFinite(dbl) ? `DBL <b>${num(dbl, 1)}</b> <span class="unit">mm</span>` : '',
+    `状態 <span class="st ${statusClass(e)}">${statusText(e)}</span>`,
+  ].filter(Boolean).map(s => `<span>${s}</span>`).join('');
+  const blocked = e.check.blockers.length > 0;
+  $('btnQueue').disabled = e.status === 'queued' || blocked;
+  $('btnUnqueue').disabled = e.status !== 'queued';
+  $('btnExport').disabled = blocked || !status.exportDir;
+  $('btnExport').title = status.exportDir ? `共有フォルダ ${status.exportDir} へ書き出す` : '書き出し先が設定されていません(config.json の exportDir)';
+  $('btnSend').disabled = blocked || !status.destinations.length;
+  $('btnSend').title = status.destinations.length ? '送り先へ送る' : '送り先が設定されていません(config.json の destinations)';
+  showView(view);
+}
+function showView(v) {
+  if (!$('views').querySelector(`[data-view="${CSS.escape(v)}"]`)) v = 'shape';
+  view = v;
+  for (const b of $('views').children) b.classList.toggle('on', b.dataset.view === v);
+  for (const p of $('view').querySelectorAll('[data-view-pane]')) p.hidden = p.dataset.viewPane !== v || !current;
+  if (v === 'shape' && current) drawShapes($('plot'), current.traces, { guide: $('showGuide').checked, labels: true, dbl: dblOf(current) });
+  // 拡張のページ: 選んだ受信データの id を渡して開く(別のデータを選んだら開き直す)
+  const pane = $('view').querySelector(`[data-view-pane="${CSS.escape(v)}"] iframe`);
+  if (pane && current) {
+    const src = `/ext/${encodeURIComponent(v.slice(4))}/?id=${encodeURIComponent(current.id)}`;
+    if (pane.getAttribute('src') !== src) pane.setAttribute('src', src);
+  }
+  if (current) $('placeholder').hidden = v !== 'shape' || current.traces.some(t => t.points && t.points.length > 2);
+}
+function bindViews() { for (const b of $('views').children) b.onclick = () => showView(b.dataset.view); }
+bindViews();
+// 拡張のページが中身を変えたら(加工条件を保存した、など)、一覧と詳細を読み直す
+window.addEventListener('message', ev => {
+  if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'vca-hub:changed') return;
+  lastListJson = '';
+  refresh().then(() => { if (selected) select(selected); });
+});
+/** 拡張が画面に出すページを、右の面のタブに足す */
+function addExtensionViews(list) {
+  for (const x of list.filter(x => x.page)) {
+    const id = 'ext:' + x.name;
+    if ($('views').querySelector(`[data-view="${CSS.escape(id)}"]`)) continue;
+    const b = document.createElement('button');
+    b.dataset.view = id; b.textContent = x.page; b.title = `拡張「${x.title}」`; b.className = 'ext';
+    $('views').appendChild(b);
+    const pane = document.createElement('div');
+    pane.className = 'sheet frame'; pane.dataset.viewPane = id; pane.hidden = true;
+    pane.innerHTML = `<iframe title="${esc(x.page)}"></iframe>`;
+    $('view').insertBefore(pane, $('placeholder'));
+  }
+  bindViews();
+}
+$('showGuide').onchange = () => showView(view);
+new ResizeObserver(() => { if (current && view === 'shape') showView('shape'); }).observe($('view'));
+
+// ---- タブと絞り込み ----
+for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => {
+  for (const x of document.querySelectorAll('.tabs button')) x.setAttribute('aria-selected', String(x === b));
+  for (const p of document.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== b.dataset.tab;
+};
+for (const b of $('filter').children) b.onclick = () => {
+  filter = b.dataset.f;
+  for (const x of $('filter').children) x.classList.toggle('on', x === b);
+  renderList();
+};
+
+// ---- 送る前の確認(設計書 6 章)。mode: queue(加工機向けの送信待ち)・export(共有フォルダ)・send(送り先) ----
+const MODES = {
+  queue: { title: '加工機向けに送信待ちにする', ok: '送信待ちにする', to: () => 'この名前を求めてきた加工機' },
+  export: { title: '共有フォルダへ書き出す', ok: '書き出す', to: () => `共有フォルダ ${status.exportDir}` },
+  send: { title: '送り先へ送る', ok: '送る', to: () => $('confirmDest').value },
+};
+const REASON = {
+  'bad-name': '使えない名前です(空、ファイル名に使えない文字、.. は使えません)',
+  'no-export-dir': '書き出し先が設定されていません', 'no-destination': '送り先が設定されていません',
+};
+let mode = 'queue', overwrite = false, taken = null, failure = null;
+function openConfirm(m) {
+  mode = m;
+  const e = current, M = MODES[m];
+  $('confirmTitle').textContent = M.title;
+  $('confirmOk').textContent = M.ok;
+  $('confirmName').value = e.name || '';
+  $('confirmUseJob').hidden = !e.job;
+  $('confirmUseJob').textContent = `受け取った JOB (${e.job}) を使う`;
+  $('confirmDestRow').hidden = m !== 'send';
+  $('confirmDest').innerHTML = status.destinations.map(d => `<option>${esc(d)}</option>`).join('');
+  $('confirmCheck').checked = false;
+  $('confirmReplace').checked = false;
+  overwrite = false; taken = null; failure = null;
+  $('confirm').showModal();
+  drawShapes($('confirmPlot'), e.traces, { labels: true, dbl: dblOf(e), pad: 0.08 });
+  refreshConfirm();
+}
+async function refreshConfirm() {
+  const e = current, name = $('confirmName').value.trim();
+  $('confirmKv').innerHTML = [
+    ['名前', name || '(まだ付けていません)'], ['左右', e.traces.map(t => EYE[t.eye] || t.eye).join('・') || 'なし'], ['送る先', MODES[mode].to()],
+  ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('');
+  if (taken && taken !== name) taken = null;
+  $('replaceRow').hidden = !taken;
+  $('confirmMsgs').innerHTML =
+    (failure ? `<li class="e"><b>できませんでした</b>${esc(failure)}</li>` : '') +
+    (taken ? `<li class="w"><b>同じ名前</b>名前 ${esc(taken)} のデータが、すでに送信待ちです。</li>` : '') +
+    (overwrite ? '<li class="w"><b>上書き</b>同じ名前のファイルが書き出し先にあります。書き出すと上書きされます。</li>' : '') +
+    e.check.notices.map(s => `<li class="w"><b>注意</b>${esc(s)}(値は変えずにそのまま送ります)</li>`).join('') +
+    extHtml(e.extensions);
+  $('confirmOk').disabled = !$('confirmCheck').checked || !name || (taken && !$('confirmReplace').checked);
+  if (mode === 'export' && name) {
+    let exists = false;
+    try { exists = (await api('/api/export-check?name=' + encodeURIComponent(name))).exists; } catch { /* 名前が使えなければ送るときに断られる */ }
+    if (exists !== overwrite && $('confirmName').value.trim() === name) { overwrite = exists; refreshConfirm(); }
+  } else if (overwrite) { overwrite = false; refreshConfirm(); }
+}
+$('btnQueue').onclick = () => openConfirm('queue');
+$('btnExport').onclick = () => openConfirm('export');
+$('btnSend').onclick = () => openConfirm('send');
+$('confirmUseJob').onclick = () => { $('confirmName').value = current.job; failure = null; refreshConfirm(); };
+$('confirmName').oninput = () => { failure = null; refreshConfirm(); };
+$('confirmDest').onchange = refreshConfirm;
+$('confirmCheck').onchange = refreshConfirm;
+$('confirmReplace').onchange = refreshConfirm;
+$('confirmCancel').onclick = () => $('confirm').close();
+$('confirmOk').onclick = async () => {
+  const name = $('confirmName').value.trim();
+  const body = { confirmed: true, name };
+  if (mode === 'send') body.to = $('confirmDest').value;
+  if (taken === name && $('confirmReplace').checked) body.replace = true;
+  $('confirmOk').disabled = true;
+  try {
+    await api(`/api/jobs/${current.id}/${mode}`, { method: 'POST', body: JSON.stringify(body) });
+  } catch (err) {
+    const b = err.body || {};
+    // 同じ名前のデータが送信待ちなら、前のものを外すかを、この画面で選んでもらう
+    if (b.error === 'name-taken') { taken = name; failure = null; refreshConfirm(); return; }
+    failure = b.blockers ? b.blockers.join(' / ') : REASON[b.error] ||
+      (b.upload ? `送り先が STATUS=${b.upload.status} を返しました ${b.upload.statusText || ''}` : b.message || err.message);
+    refreshConfirm();
+    return;
+  } finally {
+    await refresh();
+  }
+  $('confirm').close();
+};
+
+// ---- はい・いいえを聞く画面 ----
+function ask(title, text, ok) {
+  $('askTitle').textContent = title;
+  $('askText').textContent = text;
+  $('askOk').textContent = ok;
+  $('ask').showModal();
+  return new Promise(resolve => {
+    $('askOk').onclick = () => { $('ask').close(); resolve(true); };
+    $('askCancel').onclick = () => { $('ask').close(); resolve(false); };
+    $('ask').oncancel = () => resolve(false);
+  });
+}
+$('btnUnqueue').onclick = async () => { await api(`/api/jobs/${current.id}/unqueue`, { method: 'POST', body: '{}' }); await refresh(); };
+$('btnDelete').onclick = async () => {
+  const label = current.name || `名前なし (JOB ${current.job || 'なし'})`;
+  if (!await ask('受信データを削除する', `${label} の受信データを削除します。元に戻せません。`, '削除する')) return;
+  await api('/api/jobs/' + current.id, { method: 'DELETE' });
+  shapes.delete(current.id);
+  selected = current = null;
+  await refresh();
+};
+
+// ---- 送受信の記録 ----
+const EVENT = {
+  started: '起動', connected: '接続', disconnected: '切断', initialized: '初期化', received: '受信', sent: '送信',
+  queued: '送信待ちにした', unqueued: '送信待ちを取り消した', deleted: '削除', 'job-complete': '作業完了の知らせ',
+  maintenance: '機器の状態', download: '要求に応えられず', 'unsupported-request': '対応していない要求', 'no-req': '正しくないパケット',
+  rejected: '接続を断った', link: '通信のエラー', session: 'セッションのエラー', upload: '受け取れず', web: '画面のエラー',
+  'queue-blocked': '送信待ちにできず', 'send-blocked': '送り出せず', 'sent-not-recorded': '送ったが送信済みを記録できず',
+  exported: '共有フォルダへ書き出した', uploaded: '送り先へ送った', imported: 'フォルダから取り込んだ', 'import-failed': '取り込めず',
+  'import-move': '取り込んだファイルを移せず', purged: '保存期間を過ぎたので削除', 'autoconnect-ignored': 'オートコネクトを断った', autoconnect: 'オートコネクトのエラー',
+  ext: '拡張', 'ext-send': '拡張が送る項目を変えた', 'ext-error': '拡張のエラー',
+};
+let lastLogJson = '';
+async function loadLog() {
+  const rows = await api('/api/log');
+  const json = JSON.stringify(rows);
+  if (json === lastLogJson) return;
+  lastLogJson = json;
+  $('log').innerHTML = rows.slice().reverse().map(r => `<li class="${esc(r.level)}"><span class="t">${esc(fmtTime(r.at))}</span><span class="ev">${esc(EVENT[r.event] || r.event)}</span> ${esc(r.job || '')}
+    <span class="d">${esc([r.peer, r.result, r.detail].filter(Boolean).join(' ・ '))}</span></li>`).join('') || '<li class="muted">記録はまだありません。</li>';
+}
+
+// ---- 設定 ----
+async function loadStatus() {
+  status = await api('/api/status');
+  const s = status;
+  // 通信方式: VCA(DCS)か、拡張が足したメーカーの通信方式か
+  const titles = {};
+  for (const x of s.extensions || []) for (const p of x.protocols || []) titles[p.id] = p.title;
+  const proto = p => (p === 'vca' ? 'VCA' : titles[p] || p);
+  const ports = [];
+  if (s.remote) ports.push(`TCP ${s.remote} リモート接続 [${proto(s.remoteProtocol)}]`);
+  for (const l of s.listeners || []) ports.push(`TCP ${l.port} ${l.name} [${proto(l.protocol)}]`);
+  $('conf').innerHTML = [
+    ['待ち受け', ports.length ? ports.join('\n') : 'なし'],
+    ['ローカル接続', (s.localDevices || []).length ? s.localDevices.map(d => `${d.name} ${d.host}:${d.port} [${proto(d.protocol)}]`).join('\n') : 'なし'],
+    ['オートコネクト', s.autoconnect ? `UDP ${s.autoconnect}` : 'なし'],
+    ['送り先', (s.destinationList || []).length ? s.destinationList.map(d => `${d.name} ${d.host}:${d.port} [${proto(d.protocol)}]`).join('\n') : 'なし'],
+    ['拡張', (s.extensions || []).length ? s.extensions.map(x => `${x.title}${x.version ? ' ' + x.version : ''} (${x.name})${x.protocols.length ? ' 通信方式: ' + x.protocols.map(p => p.title).join('・') : ''}`).join('\n') : 'なし'],
+    ['書き出し先', s.exportDir || 'なし'], ['取り込むフォルダ', s.importDir || 'なし'],
+    ['個人情報の除去', s.removePII ? 'する' : 'しない'], ['保存期間', s.retentionDays ? `${s.retentionDays} 日` : '無期限'],
+    ['保存先', s.dataDir],
+  ].map(([k, v]) => `<tr><th>${k}</th><td class="${/先|フォルダ/.test(k) ? 'mono' : ''}">${esc(v).replace(/\n/g, '<br>')}</td></tr>`).join('');
+  addExtensionViews(s.extensions || []);
+  try {
+    const devs = await api('/api/devices');
+    $('devices').innerHTML = devs.map(d => { const v = d.device || {}; return `<tr><td class="mono">${esc(d.id)}</td><td class="mono">${esc(v.dev || '-')}</td><td>${esc([v.ven, v.model].filter(Boolean).join(' ') || '-')}</td><td class="mono">${esc(d.peer || '-')}</td></tr>`; }).join('') ||
+      '<tr><td colspan="4" class="muted">まだありません</td></tr>';
+  } catch { /* 記録がなくても画面は使える */ }
+}
+
+// ---- 読み直し ----
+async function refresh() {
+  try {
+    const list = await api('/api/jobs');
+    const json = JSON.stringify(list);
+    if (json !== lastListJson) {
+      lastListJson = json;
+      entries = list;
+      renderList();
+      fillShapes();
+      // 選んでいるものの状態・名前・送った記録が変わったら、詳細も読み直す
+      const e = selected && list.find(x => x.id === selected);
+      if (selected && !e) { selected = current = null; renderDetail(); }
+      else if (e && current) select(selected);
+    }
+    renderSpec();
+    await loadLog();
+  } catch (err) {
+    $('spec').textContent = 'vca-hub に接続できません。start.bat の窓が開いているか確かめてください(' + err.message + ')';
+    $('spec').classList.add('down');
+  }
+}
+loadStatus().then(refresh).catch(refresh);
+renderDetail();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

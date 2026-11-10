@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>加工条件</title>
+<style>
+  /* vca-hub の管理画面と同じ見た目(角は立てる・影は使わない・区切りは罫線・色はアクセント 1 色) */
+  :root {
+    --font: "BIZ UDPゴシック", "BIZ UDPGothic", system-ui, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    --mono: "BIZ UDゴシック", "BIZ UDGothic", ui-monospace, Consolas, monospace;
+    --bg: #ffffff; --band: #f2f3f4; --ink: #1a1a1a; --ink-2: #3a3f44; --muted: #555b61; --line: #c8ccd0; --line-light: #dde0e3;
+    --accent: #1f3a5f; --accent-ink: #ffffff; --warn-bg: #fff6df; --warn-ink: #5c4300; --err-bg: #fde8e8; --err-ink: #7a1a1a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --band: #1d2127; --ink: #e6e8eb; --ink-2: #c4c9cf; --muted: #9aa1a9; --line: #3a4048; --line-light: #2c3138;
+      --accent: #8fb0d6; --accent-ink: #0e1520; --warn-bg: #352b10; --warn-ink: #f0d58f; --err-bg: #3a1c1c; --err-ink: #f2b6b6;
+    }
+  }
+  * { box-sizing: border-box; border-radius: 0; }
+  [hidden] { display: none !important; }
+  body { margin: 0; padding: 14px 18px 24px; background: var(--bg); color: var(--ink); font: 14px/1.7 var(--font); }
+  h2 { font-size: 15px; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--ink); }
+  p { margin: 6px 0; font-size: 12.5px; color: var(--ink-2); }
+  .f { display: grid; grid-template-columns: 12em minmax(0, 22em); gap: 6px; align-items: center; margin: 8px 0; }
+  .f > span { color: var(--muted); font-size: 13px; }
+  .f > span code { font-family: var(--mono); color: var(--ink-2); }
+  select, input, button { font: inherit; }
+  select, input { width: 100%; padding: 3px 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  input { font-family: var(--mono); text-align: right; }
+  button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 4px 14px; cursor: pointer; }
+  button:hover { border-color: var(--ink); }
+  button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .row { display: flex; gap: 6px; margin-top: 14px; }
+  .msg { margin-top: 10px; padding: 4px 10px; font-size: 12.5px; border: 1px solid var(--line); }
+  .msg.e { background: var(--err-bg); color: var(--err-ink); border: 2px solid currentColor; }
+  .msg.w { background: var(--warn-bg); color: var(--warn-ink); border-color: currentColor; }
+  .msg.ok { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<h2>加工条件</h2>
+<p>選んだ受信データに付ける加工条件です。付けた条件は、加工機・共有フォルダ・送り先へ送るときに足されます(受け取った中身は変えません)。値の意味は DCS の ETYP・BEVP・BEVM・BEVC・POLISH です。</p>
+<div id="none" class="msg w" hidden>一覧から受信データを選んでください。</div>
+<form id="form" hidden>
+  <div class="f"><span>縁の加工 <code>ETYP</code></span><select id="ETYP"></select></div>
+  <div class="f" id="rowBEVP"><span>位置の決め方 <code>BEVP</code></span><select id="BEVP"></select></div>
+  <div class="f" id="rowBEVM"><span>位置 <code>BEVM</code>(mm または %)</span><input id="BEVM" inputmode="decimal" autocomplete="off"></div>
+  <div class="f" id="rowBEVC"><span>沿わせるカーブ <code>BEVC</code></span><input id="BEVC" inputmode="decimal" autocomplete="off"></div>
+  <div class="f"><span>磨き <code>POLISH</code></span><select id="POLISH"></select></div>
+  <div class="row"><button type="submit" class="on">保存する</button><button type="button" id="clear">外す</button></div>
+  <div id="msg" class="msg" hidden></div>
+</form>
+<script>
+const $ = id => document.getElementById(id);
+const id = new URLSearchParams(location.search).get('id');
+const API = '/api/ext/processing-conditions/';
+let info = null;
+
+async function call(path, body) {
+  const res = await fetch(API + path, body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-VCA-Hub': '1' }, body: JSON.stringify(body) }
+    : {});
+  const r = await res.json();
+  if (!res.ok) throw new Error(r.message || r.error);
+  return r;
+}
+function options(sel, map, blank) {
+  sel.innerHTML = (blank ? `<option value="">${blank}</option>` : '') +
+    Object.entries(map).sort((a, b) => Number(a[0]) - Number(b[0])).map(([k, v]) => `<option value="${k}">${k}: ${v}</option>`).join('');
+}
+function rows() {
+  const etyp = $('ETYP').value, bevp = $('BEVP').value, n = info.needs;
+  $('rowBEVP').hidden = !n.position.includes(etyp);
+  $('rowBEVM').hidden = $('rowBEVP').hidden || !n.m.includes(bevp);
+  $('rowBEVC').hidden = $('rowBEVP').hidden || !n.c.includes(bevp);
+}
+function show(kind, text) { $('msg').hidden = false; $('msg').className = 'msg ' + kind; $('msg').textContent = text; }
+function changed() { if (parent !== window) parent.postMessage({ type: 'vca-hub:changed' }, location.origin); }
+
+async function load() {
+  if (!id) { $('none').hidden = false; return; }
+  info = await call('conditions?id=' + encodeURIComponent(id));
+  options($('ETYP'), info.options.ETYP, '選んでください');
+  options($('BEVP'), info.options.BEVP, '選んでください');
+  options($('POLISH'), info.options.POLISH, '付けない(加工機の設定のまま)');
+  const c = info.conditions || {};
+  for (const k of ['ETYP', 'BEVP', 'BEVM', 'BEVC', 'POLISH']) $(k).value = c[k] ?? '';
+  $('form').hidden = false;
+  rows();
+  if (!info.conditions) show(info.required ? 'w' : 'ok', info.required ? 'まだ付いていません。付けるまで送れません。' : 'まだ付いていません。');
+}
+$('ETYP').onchange = rows;
+$('BEVP').onchange = rows;
+$('form').onsubmit = async ev => {
+  ev.preventDefault();
+  const conditions = {};
+  for (const k of ['ETYP', 'BEVP', 'BEVM', 'BEVC', 'POLISH']) if (!$('row' + k) || !$('row' + k).hidden) conditions[k] = $(k).value;
+  try { await call('conditions', { id, conditions }); show('ok', '保存しました。'); changed(); } catch (e) { show('e', e.message); }
+};
+$('clear').onclick = async () => {
+  try { await call('clear', { id }); for (const k of ['ETYP', 'BEVP', 'BEVM', 'BEVC', 'POLISH']) $(k).value = ''; rows(); show('ok', '外しました。'); changed(); } catch (e) { show('e', e.message); }
+};
+load().catch(e => show('e', e.message));
+</script>
+</body>
+</html>

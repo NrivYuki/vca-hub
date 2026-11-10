@@ -1,0 +1,11 @@
+# 動かしたときのデータ(受信データ・記録・機器の要求 ID・拡張の鍵)
+/data/
+
+# 配る zip を作ったときの出力
+/dist/
+
+# 手元の設定と、手元に入れた拡張
+/config.json
+/extensions/
+
+node_modules/

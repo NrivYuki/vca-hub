@@ -81,7 +81,9 @@ function watchFolder({ dir, store, log, intervalMs = 5000, settleMs = 2000 }) {
       const file = path.join(dir, n);
       let st;
       try { st = fs.statSync(file); } catch { continue; }
-      if (!st.isFile() || path.extname(n).toLowerCase() !== '.vca' || Date.now() - st.mtimeMs < settleMs) continue;
+      // 書きかけを避けるため、最後の書き込みから settleMs たっていないものは次の回にする。
+      // settleMs が 0 なら待たない(Date.now() はミリ秒の端数を切り捨てるので、書いた直後は差がわずかに負になることがある)
+      if (!st.isFile() || path.extname(n).toLowerCase() !== '.vca' || (settleMs > 0 && Date.now() - st.mtimeMs < settleMs)) continue;
       const key = `${n}|${st.size}|${st.mtimeMs}`;
       if (imported.has(key)) { tryMove(file, DONE_DIR, n); continue; }   // 取り込んだが移せなかったもの
       let entry;

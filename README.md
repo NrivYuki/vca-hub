@@ -76,7 +76,7 @@ VCA の注文データには、装用者の氏名や処方度数などの個人�
 | `vendor-records` | 機器ごとに項目を足したり外したりする |
 | `text-protocol` | DCS ではない、テキストの通信方式で受け取り、送る |
 
-拡張の仕組み(フック・通信方式・管理画面のページ)は、設計書の 13 章にある。
+拡張の仕組み(フック・通信方式・管理画面のページ)は、設計書の 13 章にある。拡張で通信方式を足した例として、マイコン向けの通信規格 OLDP の機器をつなぐ拡張を [vca-hub-extension](https://github.com/NrivYuki/vca-hub-extension) に置いている。
 
 ## テスト
 
@@ -96,7 +96,7 @@ pwsh -File tools/package.ps1 -NodeZip <Node.js の公式の Windows 用 zip>
 
 ## ライブラリ
 
-`src/lib/` の `vca-parser.js`・`vca-records.js`・`vca-session.js`・`vca-tcp.js` は、vca-guide の `src` から写したものである。vca-guide と同じものに保ち、vca-hub の中では書き換えない。vca-guide が隣のフォルダ(`../vca-guide`)にあれば、テスト `tests/e2e.test.js` が同じであることを確かめる(なければ、この確認だけを飛ばす)。
+`src/lib/` の `vca-parser.js`・`vca-records.js`・`vca-session.js`・`vca-tcp.js` は、[vca-guide](https://github.com/NrivYuki/vca-guide) の `src` から写したものである。vca-guide と同じものに保ち、vca-hub の中では書き換えない。vca-guide が隣のフォルダ(`../vca-guide`)にあれば、テスト `tests/e2e.test.js` が同じであることを確かめる(なければ、この確認だけを飛ばす)。
 
 ## 注意
 

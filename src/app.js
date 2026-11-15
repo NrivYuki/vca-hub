@@ -8,7 +8,7 @@ const { hostOptions, requestIdEntries } = require('./host/session.js');
 const { Registry } = require('./host/registry.js');
 const { Store } = require('./store/store.js');
 const { Log } = require('./log.js');
-const { isAllowed, peerOf } = require('./net/tcp.js');
+const { isAllowed, allowList, peerOf } = require('./net/tcp.js');
 const { exportFile, exportTarget, watchFolder, fileRecords } = require('./send/folder.js');
 const { uploadTo, uploadRecords } = require('./device/upload.js');
 const { buildDownload } = require('./send/build.js');
@@ -184,6 +184,7 @@ function createHub(cfg, opts = {}) {
   }
 
   async function start() {
+    allowList(cfg.allow);   // 許可する範囲の書き損じがあれば、待ち受ける前に止める
     if (cfg.retentionDays > 0) {
       purge();
       const t = setInterval(purge, PURGE_INTERVAL_MS);

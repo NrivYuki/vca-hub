@@ -13,7 +13,9 @@ const PII_LABELS = new Set([
   'CLIENT', 'CLIENTF', 'CLINIT', 'CLAGE', 'CLHT', 'CLLIFE', 'CLLNAM', 'CLNVB', 'CLDEYE', 'CLHLAT', 'CLFRNT', 'ACCN',
 ]);
 
-const LINE_LABEL = /^[\s\x1c\x1d\x1e\x1a]*\*?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+// 行の頭のラベル。個人情報項目の除去では、読み取り(vca-parser.js)がその項目として読む行を全て除けるよう、
+// ラベルの前後の空白・制御文字・8 ビットの文字を全て読み飛ばす(読み取りが読まない頭の文字が付いた行も除く)
+const LINE_LABEL = /^[\s\x00-\x20\x7f-\xff]*\*?([A-Za-z_][A-Za-z0-9_]*)[\s\x00-\x20\x7f-\xff]*=/;
 
 /** ファイル名に使えない文字と、フォルダをさかのぼる指定を取り除く。 */
 function safeName(s) {
@@ -22,6 +24,11 @@ function safeName(s) {
 }
 
 function pad(n, w = 2) { return String(n).padStart(w, '0'); }
+
+// JOB の型 limited の上限(5.1.8。vca-guide の docs/conformance.md)
+const JOB_MAX = 12;
+// Windows の装置の名前。拡張子を付けても装置を指す
+const WINDOWS_DEVICE = /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$|CLOCK\$)(\..*)?$/i;
 
 class Store {
   /** @param {{dir: string, removePII?: boolean}} opts */
@@ -121,12 +128,17 @@ class Store {
   }
 
   /**
-   * 人が付けた名前を確かめる(設計書 6 章)。送信先へのジョブ番号と、書き出しのファイル名になるので、
-   * 空、ファイル名に使えない文字、フォルダをさかのぼる指定は断る(code='bad-name')。
+   * 人が付けた名前を確かめる(設計書 6 章)。送信先へのジョブ番号(JOB)と、書き出しのファイル名になるので、次のものは断る(code='bad-name')。
+   * - 空、ファイル名に使えない文字、フォルダをさかのぼる指定
+   * - JOB の型 limited に合わないもの: 12 文字を超える、文字の範囲(32-127)の外(5.1.8。vca-hub は文字コードを ASCII で取り決める)
+   * - 値の区切りの ;(JOB の値が ; の前で切れる)
+   * - Windows の装置の名前(CON・NUL・COM1 など。書き出した CON.vca を、ほかのソフトがファイルとして開けない)
    */
   static checkName(name) {
     const n = String(name ?? '').trim();
-    if (!n || n !== safeName(n) || n.length > 40) throw Object.assign(new Error('使えない名前です'), { code: 'bad-name' });
+    if (!n || n !== safeName(n) || n.length > JOB_MAX || !/^[\x20-\x7f]+$/.test(n) || n.includes(';') || WINDOWS_DEVICE.test(n)) {
+      throw Object.assign(new Error('使えない名前です'), { code: 'bad-name' });
+    }
     return n;
   }
 

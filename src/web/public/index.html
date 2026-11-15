@@ -285,7 +285,7 @@
   <div class="db">
     <p>加工の取り違えを防ぐため、名前を付け、次の内容を確かめてください。</p>
     <div class="f"><span>名前(ジョブ番号)</span>
-      <input type="text" id="confirmName" maxlength="40" autocomplete="off"></div>
+      <input type="text" id="confirmName" maxlength="12" autocomplete="off"></div>
     <div class="f"><span></span><div><button id="confirmUseJob" type="button" class="small">受け取った JOB を使う</button></div></div>
     <div class="f" id="confirmDestRow"><span>送り先</span><select id="confirmDest"></select></div>
     <table class="kv"><tbody id="confirmKv"></tbody></table>
@@ -487,7 +487,8 @@ function renderDetail() {
   $('kv').innerHTML = [
     ['名前', e.name || '名前なし'], ['受け取った JOB', e.job || 'なし'], ['状態', statusText(e)], ['受信日時', fmtTime(e.receivedAt)],
     ['受信元', e.peer], ['要求の種類', e.type], ['CRC', e.crcOk === null ? 'なし' : e.crcOk ? '正しい' : '合わない'],
-    ['玉型', t.length ? t.map(x => `${EYE[x.eye] || x.eye} 形式 ${x.fmt}・${x.n} 点・${x.mode}${x.circ != null ? `・周長 ${num(x.circ)} mm` : ''}`).join('<br>') : 'なし'],
+    // 眼・形式・角度のモードは、受け取った TRCFMT の値がそのまま入るので、全てエスケープする
+    ['玉型', t.length ? t.map(x => esc(`${EYE[x.eye] || x.eye} 形式 ${x.fmt ?? '-'}・${x.n} 点・${x.mode}${x.circ != null ? `・周長 ${num(x.circ)} mm` : ''}`)).join('<br>') : 'なし'],
     ['除いた個人情報', e.piiRemoved.length ? esc(e.piiRemoved.join('、')) : 'なし'],
     ...(e.extensions || []).map(x => [`拡張 ${esc(x.title)}`, x.lines.map(esc).join('<br>')]),
     ['送った記録', e.sent.length ? e.sent.map(s => `${esc(fmtTime(s.at))} ${esc(s.to)}`).join('<br>') : 'なし'],
@@ -571,7 +572,7 @@ const MODES = {
   send: { title: '送り先へ送る', ok: '送る', to: () => $('confirmDest').value },
 };
 const REASON = {
-  'bad-name': '使えない名前です(空、ファイル名に使えない文字、.. は使えません)',
+  'bad-name': '使えない名前です(半角の英数字・記号で 12 文字まで。ファイル名に使えない文字、;、..、CON などの装置の名前は使えません)',
   'no-export-dir': '書き出し先が設定されていません', 'no-destination': '送り先が設定されていません',
 };
 let mode = 'queue', overwrite = false, taken = null, failure = null;

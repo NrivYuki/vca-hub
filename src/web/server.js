@@ -18,11 +18,23 @@ function send(res, code, body, type = 'application/json; charset=utf-8') {
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
 
+// 要求の本文の上限(画面から送るのは名前などの小さな JSON だけ)
+const MAX_BODY = 1e5;
+const badRequest = message => Object.assign(new Error(message), { code: 'bad-request' });
+
+/** 本文の JSON を読む。大きすぎる(code='too-large')、JSON でない・オブジェクトでない(code='bad-request')ときは断る */
 function readJson(req) {
   return new Promise((resolve, reject) => {
-    let s = '';
-    req.on('data', c => { s += c; if (s.length > 1e5) req.destroy(); });
-    req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch (e) { reject(e); } });
+    let s = '', over = false;
+    req.on('data', c => { if (over) return; s += c; if (s.length > MAX_BODY) { over = true; s = ''; } });
+    req.on('error', reject);
+    req.on('end', () => {
+      if (over) return reject(Object.assign(new Error('本文が大きすぎます'), { code: 'too-large' }));
+      let v;
+      try { v = s ? JSON.parse(s) : {}; } catch { return reject(badRequest('本文が JSON ではありません')); }
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return reject(badRequest('本文が JSON のオブジェクトではありません'));
+      resolve(v);
+    });
   });
 }
 
@@ -55,7 +67,7 @@ function detail(store, entry, ext) {
 // 断る理由ごとの HTTP の状態コード
 const REFUSAL = {
   'bad-name': 400, 'blocked': 409, 'name-taken': 409, 'no-export-dir': 409, 'no-destination': 409, 'upload-failed': 502, 'not-found': 404,
-  'ext-send': 409, 'no-protocol': 409, 'bad-request': 400,
+  'ext-send': 409, 'no-protocol': 409, 'bad-request': 400, 'too-large': 413,
 };
 // 拡張のページと一緒に配るファイルの種類
 const EXT_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -79,7 +91,8 @@ function startWeb({ host, port, store, registry, log, cfg, hub, ext }) {
       const hostName = String(req.headers.host || '').replace(/:\d+$/, '');
       if (!['localhost', '127.0.0.1', '[::1]'].includes(hostName)) return send(res, 403, { error: 'forbidden host' });
 
-      const url = new URL(req.url, 'http://localhost');
+      let url;
+      try { url = new URL(req.url, 'http://localhost'); } catch { throw badRequest('パスを読めません'); }
       if (req.method === 'GET' && STATIC[url.pathname]) {
         const [file, type] = STATIC[url.pathname];
         return send(res, 200, fs.readFileSync(path.join(PUBLIC, file)), type);
@@ -88,7 +101,8 @@ function startWeb({ host, port, store, registry, log, cfg, hub, ext }) {
       const pm = req.method === 'GET' && url.pathname.match(/^\/ext\/([\w-]+)\/(.*)$/);
       if (pm) {
         const e = ext && ext.get(pm[1]);
-        const rel = pm[2] ? decodeURIComponent(pm[2]) : e && e.page && e.page.file;
+        let rel;
+        try { rel = pm[2] ? decodeURIComponent(pm[2]) : e && e.page && e.page.file; } catch { return send(res, 404, { error: 'not found' }); }
         const file = e && rel && extFile(e.dir, rel);
         const type = file && EXT_TYPES[path.extname(file).toLowerCase()];
         if (!type) return send(res, 404, { error: 'not found' });
@@ -178,6 +192,8 @@ function startWeb({ host, port, store, registry, log, cfg, hub, ext }) {
       }
       return send(res, 404, { error: 'not found' });
     } catch (e) {
+      // 要求の形の誤り(読めないパス・本文)は、利用者の側の誤りとして返す
+      if (e.code === 'bad-request' || e.code === 'too-large') return send(res, REFUSAL[e.code], { error: e.code, message: e.message });
       log.write('error', { event: 'web', detail: e.message });
       return send(res, 500, { error: 'internal error' });
     }

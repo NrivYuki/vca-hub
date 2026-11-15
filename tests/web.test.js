@@ -88,3 +88,24 @@ test('削除すると一覧から消え、ファイルも消える', async () =>
 test('管理画面は 127.0.0.1 だけで待ち受ける', () => {
   assert.equal(loadConfig(path.join(dir, 'none.json')).web.host, '127.0.0.1');
 });
+
+/** 本文をそのまま送る(壊れた JSON などを送るため) */
+function raw(method, p, text) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: web, method, path: p, agent: false, headers: { Host: `localhost:${web}`, 'X-VCA-Hub': '1' } }, res => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end(text);
+  });
+}
+
+test('形の崩れた要求は、中の誤り(500)ではなく、要求の誤りとして断る', async () => {
+  const one = hub.store.saveReceived({ body: sample.replace('REQ=FIL', 'ANS=TRC'), type: 'TRC', job: 'W2', peer: 'test', crcOk: null }).id;
+  for (const text of ['{', 'null', '[]', '1', '"x"']) assert.equal(await raw('POST', `/api/jobs/${one}/queue`, text), 400, text);
+  assert.equal(await raw('POST', `/api/jobs/${one}/queue`, 'x'.repeat(100001)), 413, '大きすぎる本文');
+  assert.equal(await raw('GET', '/ext/demo/%', undefined), 404, '戻せない % の並び');
+  assert.equal(await raw('GET', '/ext/demo/%E0%A4%A', undefined), 404);
+  assert.equal((await call('GET', '/api/jobs')).code, 200, 'その後も一覧を取れる');
+});

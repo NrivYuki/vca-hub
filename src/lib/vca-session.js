@@ -22,6 +22,8 @@
   // 受信中のパケットの長さの上限(文字数)。規格に上限は無いが、終わりの GS が届かないときにメモリを使い続けないための
   // 安全上限。面形状の表(141 × 141 の値など)でも数百 KB なので 1 MiB とする。opts.maxPacket で変えられる
   const MAX_PACKET = 1024 * 1024;
+  // 1 つの接続で残す警告の数の上限(パケットの外の文字を送り続けられても、警告でメモリを使い続けないため)
+  const MAX_WARNINGS = 100;
 
   // セッションの種類(7.2-7.4)。数字の要求 ID は初期化で決まる
   const UPLOAD = { TRC: 1, INS: 1, UPL: 1, CMD: 1 };   // 要求 → 応答 → データ → 応答
@@ -71,6 +73,10 @@
     let lastAccepted = null;       // 直前に受け入れたパケット(送り直しの見分けに使う)
     let peerCrc = false;           // 直前に受け入れたパケットに CRC があったか(あれば応答にも付ける、6.1.2.1)
     const warnings = [];
+    function warn(text) {
+      if (warnings.length < MAX_WARNINGS) warnings.push(text);
+      else if (warnings.length === MAX_WARNINGS) warnings.push(`警告が ${MAX_WARNINGS} 件に達したので、以降は残しません`);
+    }
 
     function finishPacket(raw) {
       let data;
@@ -79,7 +85,7 @@
       if (!data || data.crcOk === false || !data.records.length) { opts.send(NAK); return; }
       opts.send(ACK);
       // 同じパケットの送り直し: ACK だけ返して捨てる
-      if (raw === lastAccepted) { warnings.push('同じパケットがもう一度届いたので捨てました(こちらの ACK が届かなかったと考えられます)'); return; }
+      if (raw === lastAccepted) { warn('同じパケットがもう一度届いたので捨てました(こちらの ACK が届かなかったと考えられます)'); return; }
       lastAccepted = raw;
       peerCrc = data.crcOk === true;
       data.raw = raw;
@@ -107,7 +113,7 @@
           discarding = false;   // 次のパケットが始まった
         }
         if (buf !== null && c === FS) {
-          warnings.push('パケットが GS で終わらないまま次のパケットが始まったので、前のパケットを捨てました');
+          warn('パケットが GS で終わらないまま次のパケットが始まったので、前のパケットを捨てました');
           buf = null;
         }
         if (buf !== null) {
@@ -116,7 +122,7 @@
           if (c === GS) { const raw = buf; buf = null; charTimer = null; finishPacket(raw); }
           else if (buf.length > maxPacket) {
             buf = null; discarding = true;
-            warnings.push(`パケットが ${maxPacket} 文字を超えたので読み捨てます`);
+            warn(`パケットが ${maxPacket} 文字を超えたので読み捨てます`);
             charTimer = clock.setTimeout(charTimeout, timeouts.char * 1000);
             abort(new SessionError('too-large', `パケットが ${maxPacket} 文字を超えました`));
           }
@@ -129,7 +135,7 @@
           lastAccepted = null;   // 相手は先へ進んだので、次に同じパケットが来ても送り直しではない
           if (confirmWaiter) confirmWaiter.onConfirm(c);
         } else if (c !== '\r' && c !== '\n') {
-          warnings.push(`パケットの外で予期しない文字 0x${c.charCodeAt(0).toString(16)} を受け取りました`);
+          warn(`パケットの外で予期しない文字 0x${c.charCodeAt(0).toString(16)} を受け取りました`);
           if (confirmWaiter) confirmWaiter.onBadChar(c);
         }
       }

@@ -183,8 +183,19 @@ class Extensions {
         note('info', { event: 'received', job, detail: entry.id });
         return entry;
       },
-      /** 送信待ちのデータを、人が付けた名前で探す(無ければ null) */
+      /** 送信待ちのデータを、人が付けた名前で探す(無ければ null。ほかの相手へ渡している途中のものも null) */
       queued: job => self.store.findQueued(job),
+      /**
+       * 送信待ちのデータを探し、渡す相手のために押さえる(2 つの相手に同じデータを渡さない)。
+       * 押さえたものは、markSent で送信済みにするか、release・releaseAll で放すまで、ほかの相手(VCA の加工機を含む)には渡さない。
+       * holder は相手(接続)ごとに 1 つのオブジェクト。同じ holder がもう一度求めたら渡す
+       * @returns {{entry: object}|{busy: true}|null} 無ければ null。ほかの相手へ渡している途中なら busy
+       */
+      reserve: (job, holder) => self.store.reserve(job, holder),
+      /** 押さえたデータを放す(渡し終えられなかったとき)。押さえたのと違う holder からは放さない。放したら true */
+      release: (id, holder) => self.store.release(id, holder),
+      /** holder が押さえているデータを全て放す(接続が切れたとき)。放した id の一覧を返す */
+      releaseAll: holder => self.store.releaseAll(holder),
       /** 送るレコード(VCA の [ラベル, 値...])。ほかの拡張の send も通す。profile を渡せば、その項目と玉型の形式に合わせる */
       records: (entry, { device, profile } = {}) => self.app.recordsFor(entry, { kind: 'device', protocol, device: device || null, profile: profile || null, peer: name }),
       /** 渡し終えた(相手が受け取った)ら、送信済みにする */

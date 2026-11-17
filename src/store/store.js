@@ -42,6 +42,9 @@ class Store {
     // 拡張(設計書 13 章)へ知らせる関数。app.js が入れる
     //   saved(entry, body): 受信データを保存した / removed(id): 消した / check(entry, readBody): 拡張の検査 / queued(entry): 送信待ちにした
     this.hooks = { saved: null, removed: null, check: null, queued: null };
+    // 加工機へ送っている途中の送信待ちのデータ(id → 送っている接続)。送り終えるまで、ほかの接続に渡さない。
+    // 索引には残さない(送っている途中で止まったら、起動し直したときは送信待ちに戻る)
+    this.sending = new Map();
   }
 
   /**
@@ -180,9 +183,45 @@ class Store {
   }
 
   /** 送信待ちの中から、加工機が求めたジョブ番号と同じ名前のものを探す(名前の無いものは渡さない)。 */
-  findQueued(job) {
+  _queuedByName(job) {
     const want = String(job ?? '').trim();
     return this.index.find(e => e.status === 'queued' && e.name && e.name === want) || null;
+  }
+
+  /** 送信待ちの中から、加工機が求めたジョブ番号と同じ名前のものを探す。ほかの接続へ送っている途中のものは返さない。 */
+  findQueued(job) {
+    const e = this._queuedByName(job);
+    return e && !this.sending.has(e.id) ? e : null;
+  }
+
+  /**
+   * 送信待ちのデータを探し、送る接続のために押さえる(探すことと押さえることを 1 度に行い、2 つの接続に同じデータを渡さない)。
+   * 押さえたものは、送信済みにする(markSent)か、release・releaseAll で放すまで、ほかの接続には渡さない。
+   * @param {string} job 加工機が求めたジョブ番号
+   * @param {object} holder 送る接続を表すもの(放すときに同じものを渡す)
+   * @returns {{entry: object}|{busy: true}|null} 無ければ null。ほかの接続へ送っている途中なら busy
+   */
+  reserve(job, holder) {
+    const e = this._queuedByName(job);
+    if (!e) return null;
+    const by = this.sending.get(e.id);
+    if (by !== undefined && by !== holder) return { busy: true };
+    this.sending.set(e.id, holder);
+    return { entry: e };
+  }
+
+  /** 押さえたデータを放す(送り終えられなかったとき)。押さえたのと違う接続からは放さない。放したら true */
+  release(id, holder) {
+    if (this.sending.get(id) !== holder) return false;
+    this.sending.delete(id);
+    return true;
+  }
+
+  /** 接続が押さえているデータを全て放す(接続が切れたとき)。放した id の一覧を返す。 */
+  releaseAll(holder) {
+    const ids = [...this.sending].filter(([, h]) => h === holder).map(([id]) => id);
+    for (const id of ids) this.sending.delete(id);
+    return ids;
   }
 
   /**
@@ -205,6 +244,7 @@ class Store {
       e.status = 'sent';
       e.sent.push({ to, at: new Date().toISOString() });
     });
+    this.sending.delete(id);
   }
 
   /** 別の PC への送信・共有フォルダへの書き出しを記録する。加工機向けの送信待ちなら、送信待ちのまま残す。 */

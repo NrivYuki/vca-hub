@@ -5,8 +5,9 @@
 //
 // text-line の決まり(この例のためのもの。どの規格でもない):
 //   受け取る: 相手が「PUT <ジョブ>」の行、VCA の行(ラベル=値)、「END」の行を送る → 保存して「OK」、だめなら「NG <理由>」
-//   渡す:     相手が「GET <名前>」の行を送る → 送信待ちなら VCA の行と「END」、無ければ「NG notfound」
-//             相手が「ACK」の行を返したら、送信済みにする
+//   渡す:     相手が「GET <名前>」の行を送る → 送信待ちなら VCA の行と「END」、無ければ「NG notfound」、
+//             ほかの相手へ渡している途中なら「NG busy」
+//             相手が「ACK」の行を返したら、送信済みにする。ACK の前に切れたら、送信待ちに戻す
 //   送る(送り先): vca-hub が相手へつなぎ、「PUT <名前>」・VCA の行・「END」を送り、「OK」を待つ
 //
 // 使い方: このフォルダを vca-hub の extensions フォルダへ写し、config.json に書く。
@@ -47,6 +48,8 @@ module.exports = {
           const peer = `${socket.remoteAddress}:${socket.remotePort}`.replace(/^::ffff:/, '');
           if (!io.allowed(socket.remoteAddress)) { io.log('warn', { event: 'rejected', detail: `${peer} は許可範囲の外` }); socket.destroy(); return; }
           let putting = null, giving = null;
+          const holder = {};   // この接続(渡している途中のデータを押さえる印。io.reserve)
+          socket.on('close', () => io.releaseAll(holder));
           lines(socket, line => {
             if (putting) {
               if (line !== 'END') { putting.body += line + '\r\n'; return; }
@@ -61,10 +64,14 @@ module.exports = {
             const arg = rest.join(' ');
             if (cmd === 'PUT') putting = { job: arg, body: '' };
             else if (cmd === 'GET') {
-              const entry = io.queued(arg);
-              if (!entry) { socket.write('NG notfound\r\n'); return; }
+              // ACK を返さずに次の GET が来たら、前に渡したものは渡し終えていないとみて放す
+              if (giving) { io.release(giving.id, holder); giving = null; }
+              const got = io.reserve(arg, holder);
+              if (!got) { socket.write('NG notfound\r\n'); return; }
+              if (got.busy) { socket.write('NG busy\r\n'); return; }
+              const { entry } = got;
               let recs;
-              try { recs = io.records(entry); } catch (err) { socket.write(`NG ${err.message}\r\n`); return; }
+              try { recs = io.records(entry); } catch (err) { io.release(entry.id, holder); socket.write(`NG ${err.message}\r\n`); return; }
               giving = entry;
               socket.write(`JOB=${entry.name}\r\n` + toLines(recs) + 'END\r\n');
             } else if (cmd === 'ACK' && giving) {

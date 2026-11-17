@@ -224,6 +224,30 @@ test('通信方式 text-line: 受け取ったものは名前なしで保存し�
   } finally { await h.done(); }
 });
 
+test('通信方式の拡張(io.reserve)と VCA の加工機は、渡している途中のデータを互いに渡さない。切れたら送信待ちに戻す', async () => {
+  const h = await makeHub({ extensions: { 'text-protocol': true }, listeners: [{ name: 'メーカー A', port: 0, protocol: 'text-line' }], remote: { enabled: true, port: 0 } });
+  try {
+    const port = h.ports.listeners['メーカー A'];
+    const e = h.hub.store.saveReceived({ body, type: 'TRC', job: 'X', peer: 'p', crcOk: null });
+    h.hub.store.queue(e.id, 'TL-2');
+    // text-line の相手が GET したまま ACK を返さない間は、ほかの相手に渡さない
+    const first = await textCall(port, 'GET TL-2\r\n', { untilEnd: true });
+    const other = await textCall(port, 'GET TL-2\r\n');
+    other.socket.destroy();
+    assert.equal(other.text, 'NG busy\r\n');
+    assert.equal((await edgerRequest(h.ports.remote, 'TL-2')).status, 11, 'VCA の加工機には STATUS=11(表 A.24)');
+    // ACK の前に切れたら、送信待ちに戻り、VCA の加工機が受け取れる
+    first.socket.destroy();
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(h.hub.store.findQueued('TL-2').id, e.id);
+    const r = await edgerRequest(h.ports.remote, 'TL-2');
+    assert.equal(r.status, 0);
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(h.hub.store.get(e.id).status, 'sent');
+    assert.equal(h.hub.store.get(e.id).sent.length, 1);
+  } finally { await h.done(); }
+});
+
 test('通信方式 text-line の送り先へ送る(送り先ごとに VCA と通信方式を選べる)', async () => {
   let received = '';
   const server = net.createServer(s => {

@@ -4,6 +4,7 @@
 
 const path = require('node:path');
 const T = require('./lib/vca-tcp.js');
+const VCA = require('./lib/vca-parser.js');
 const { hostOptions, requestIdEntries } = require('./host/session.js');
 const { Registry } = require('./host/registry.js');
 const { Store } = require('./store/store.js');
@@ -81,6 +82,8 @@ function createHub(cfg, opts = {}) {
     };
     return { ...o, timeouts: cfg.timeouts };
   }
+  // 接続が切れたら、その接続が送っている途中だったデータを放す(host/session.js の onClose。createHost は呼ばない)
+  const releaseOnClose = (socket, o) => socket.once('close', () => o.onClose());
 
   function attached(host, peer) {
     Object.assign(host.requestIds, requestIdEntries(registry));
@@ -98,7 +101,9 @@ function createHub(cfg, opts = {}) {
       if (stopped) return;
       if (!isAllowed(dev.host, cfg.allow)) { log.write('warn', { event: 'rejected', peer, detail: 'not in allow list' }); return; }
       let host;
-      try { host = await T.connectHost(dev.host, dev.port, sessionOpts(peer)); } catch { retry(); return; }
+      const o = sessionOpts(peer);
+      try { host = await T.connectHost(dev.host, dev.port, o); } catch { retry(); return; }
+      releaseOnClose(host.socket, o);
       if (stopped) { host.socket.destroy(); return; }
       current = host.socket;
       attached(host, peer);
@@ -175,7 +180,11 @@ function createHub(cfg, opts = {}) {
       return l && l.port !== undefined ? l.port : port;
     }
     const server = await T.listenHost(port, socket => {
-      if (isAllowed(socket.remoteAddress, cfg.allow)) return sessionOpts(peerOf(socket));
+      if (isAllowed(socket.remoteAddress, cfg.allow)) {
+        const o = sessionOpts(peerOf(socket));
+        releaseOnClose(socket, o);
+        return o;
+      }
       log.write('warn', { event: 'rejected', peer: peerOf(socket), detail: 'not in allow list' });
       return null;
     }, host => attached(host, peerOf(host.socket)));
@@ -196,12 +205,25 @@ function createHub(cfg, opts = {}) {
     }
     if (cfg.autoconnect.enabled) {
       // 知らせてきた IP が送り主と同じで、許可範囲の中のときだけつなぐ(設計書 4 章)
+      // つなぐ前に作った接続ごとの設定を、つないだ後に接続(ソケット)と結び付けるため、知らされた IP:ポートで覚えておく
+      // (listenAutoconnect は同じ IP:ポートへ同時に 2 つはつながない)
+      const autoOpts = new Map();
       const udp = await T.listenAutoconnect(cfg.autoconnect.port, {
         allow: ({ ip, from }) => ip === from && isAllowed(ip, cfg.allow),
         onIgnore: (reason, info) => log.write('warn', { event: 'autoconnect-ignored', peer: `${info.ip}:${info.port}`, detail: reason }),
         onError: e => log.write('warn', { event: 'autoconnect', detail: e.code || e.message }),
-        connectOpts: ({ ip, port }) => sessionOpts(`${ip}:${port}`),
-      }, host => attached(host, peerOf(host.socket)));
+        connectOpts: ({ ip, port }) => {
+          const o = sessionOpts(`${ip}:${port}`);
+          autoOpts.set(`${ip}:${port}`, o);
+          return o;
+        },
+      }, (host, con) => {
+        const key = `${VCA.value(con, 'IP')}:${Number(VCA.value(con, 'PORT'))}`;
+        const o = autoOpts.get(key);
+        autoOpts.delete(key);
+        if (o) releaseOnClose(host.socket, o);
+        attached(host, peerOf(host.socket));
+      });
       ports.autoconnect = udp.address().port;
       closers.push(() => new Promise(r => udp.close(r)));
     }

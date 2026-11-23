@@ -83,7 +83,8 @@ function takeLock(dir) {
       // 引き継ぎの印が新しければ、ほかの vca-hub が引き継いでいる。古ければ(引き継ぐ途中で止まった)外してやり直す
       let age = 0;
       try { age = Date.now() - fs.statSync(takeover).mtimeMs; } catch { /* 消えていればやり直せる */ }
-      if (age >= 0 && age < 30000) throw inUse('引き継ぎの途中');
+      // ファイルの時刻はミリ秒より細かいので、書いた直後は今より少し先に見えることがある。前後 30 秒の中なら新しいとみなす
+      if (Math.abs(age) < 30000) throw inUse('引き継ぎの途中');
       try { fs.unlinkSync(takeover); } catch { /* 無ければよい */ }
       fs.writeFileSync(takeover, String(process.pid), { flag: 'wx' });
     }

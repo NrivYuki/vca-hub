@@ -78,7 +78,11 @@ async function main() {
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?http://localhost:${ports.web}/`, { method: 'PUT' })).json();
     const c = await cdp(target.webSocketDebuggerUrl);
     await c.send('Runtime.enable');
-    await wait(2000);
+    // 画面が一覧を読み終えるまで待つ(遅い PC では、開いてから決まった時間では出きらないことがある)
+    for (const t1 = Date.now(); Date.now() - t1 < 20000; await wait(200)) {
+      const r = await c.evaluate("document.querySelectorAll('#list li').length >= 2");
+      if (r.result && r.result.value === true) break;
+    }
     // 各段の式は、その画面が本当に出たときだけ true を返す(出ないまま OK としないため)
     const steps = [
       ['一覧', `document.querySelectorAll('#list li').length >= 2`],

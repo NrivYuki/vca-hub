@@ -17,7 +17,7 @@ const CRLF = '\r\n';
 const BODY = 'DO=R' + CRLF + 'JOB=A' + CRLF + 'DBL=18' + CRLF;
 const windows = process.platform === 'win32';
 
-test('届かない共有フォルダを取り込むフォルダにしても、起動と中継を止めない(届くかは止めずに確かめる)', async () => {
+test('届かない共有フォルダを取り込むフォルダにしても、起動と中継を止めない(届くかは止めずに確かめる)', { skip: !windows && 'UNC のパスは Windows だけ' }, async () => {
   const dir = tmp();
   const unc = '\\\\nohost-vcahub-test.invalid\\share\\in';
   const hub = createHub(merge(loadConfig(path.join(dir, 'none.json')), { dataDir: path.join(dir, 'data'), web: { enabled: false }, remote: { enabled: false }, importDir: unc }));

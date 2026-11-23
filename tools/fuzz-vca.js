@@ -4,7 +4,7 @@
 // vca-hub はこのプロセスの中で一時フォルダのデータで動かす。捕まえていない例外や Promise の拒否が起きたら、失敗として数える。
 //   A. リモート接続の口へ、セッションの前に乱数のバイト列・壊したパケット(FS と GS の間)・ACK・NAK・長いパケットを送る
 //   B. 機器としてアップロードし、項目のラベル・値・玉型の形式の欄・半径の値・項目の数を乱数で崩す
-//   C. 何も送らない接続を多く開いたままにして、ホストが閉じるか、正しい機器がつなげるか
+//   C. 1 つの相手が何も送らない接続を多く開こうとしても、IP ごとの上限までしか受けず、ほかの機器がつなげるか
 //   D. 終わりの GS を送らないパケットと、パケットの外の文字を送り続けて、ホスト(別のプロセスで動かす)のメモリがどれだけ増えるか
 //   E. オートコネクトの口へ、壊れた通知と、許可範囲の外を指す通知を送る(つなぎに行かないこと)
 //   F. 共有フォルダの取り込みに、壊れたファイル・大きいファイル・変わった名前のファイルを置く
@@ -130,6 +130,8 @@ async function main() {
   const cfg = merge(loadConfig(path.join(dir, 'none.json')), {
     dataDir: path.join(dir, 'data'), web: { enabled: false }, remote: { enabled: true, port: 0 }, connectDelay: 0,
     autoconnect: { enabled: true, port: 0 }, importDir: watch,
+    // C で、正しい機器(127.0.0.1)とは別の相手(127.0.0.2)から接続を開くため
+    allow: ['127.0.0.0/8', '::1/128'],
   });
   const hub = createHub(cfg);
   const ports = await hub.start();
@@ -180,13 +182,15 @@ async function main() {
 
     // C. 何も送らない接続
     const idle = [];
-    for (let i = 0; i < 200; i++) { const s = net.connect(remote, '127.0.0.1'); s.on('error', () => {}); s.closedAt = null; s.on('close', () => { s.closedAt = Date.now(); }); idle.push(s); }
+    for (let i = 0; i < 200; i++) { const s = net.connect({ port: remote, host: '127.0.0.1', localAddress: '127.0.0.2' }); s.on('error', () => {}); s.closedAt = null; s.on('close', () => { s.closedAt = Date.now(); }); idle.push(s); }
     await wait(500);
+    const held = idle.filter(s => !s.closedAt).length;
+    check(`C. 1 つの相手が何も送らない接続を 200 開こうとしても、受けるのは IP ごとの上限(${cfg.connections.perAddress})まで`, held === cfg.connections.perAddress, held);
     const okC = await upload(remote, sampleRecords).catch(e => e.code || e.message);
-    check('C. 何も送らない接続を 200 開いたままでも、正しい機器はアップロードできる', okC === 0, okC);
+    check('C. そのあいだも、ほかの機器はアップロードできる', okC === 0, okC);
     await wait(20000);
     const closed = idle.filter(s => s.closedAt).length;
-    console.log(`    (何も送らない接続のうち、20 秒でホストが閉じたもの: ${closed} / 200)`);
+    console.log(`    (何も送らない接続のうち、20 秒でホストが閉じたもの: ${closed} / 200。上限を超えて断ったものを含む)`);
     for (const s of idle) s.destroy();
 
     // D. 終わらないパケットと、パケットの外の文字。ホストを別のプロセスで動かし、そのプロセスの最大の RSS を見る
@@ -249,6 +253,8 @@ async function main() {
     {
       const b0 = count();
       const n = 50;
+      // 50 台を 1 つのアドレス(127.0.0.1)から模すので、IP ごとの上限をこの間だけ広げる(確かめるのは保存の同時の書き込み)
+      cfg.connections = { total: 64, perAddress: 64 };
       const rs = await Promise.all(Array.from({ length: n }, (_, i) => upload(remote, sampleRecords, `G-${i}`).catch(e => e.code || e.message)));
       const ok = rs.filter(r => r === 0).length;
       const ids = new Set(hub.store.list().map(e => e.id));

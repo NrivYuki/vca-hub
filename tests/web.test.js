@@ -65,9 +65,10 @@ test('送信待ちにするには、確認(confirmed)と、人が付けた名前
   assert.equal(hub.store.get(id).name, null, '受け取ったときは名前なし');
   assert.equal((await call('POST', `/api/jobs/${id}/queue`, { body: { name: 'W1' }, headers: h })).code, 400, '確認なし');
   assert.equal((await call('POST', `/api/jobs/${id}/queue`, { body: { confirmed: true }, headers: h })).code, 400, '名前なし');
-  const bad = await call('POST', `/api/jobs/${id}/queue`, { body: { confirmed: true, name: '../W1' }, headers: h });
+  const key = (await call('GET', `/api/jobs/${id}`)).body.confirmKey;
+  const bad = await call('POST', `/api/jobs/${id}/queue`, { body: { confirmed: true, name: '../W1', key }, headers: h });
   assert.equal(bad.body.error, 'bad-name', 'フォルダをさかのぼる名前');
-  const ok = await call('POST', `/api/jobs/${id}/queue`, { body: { confirmed: true, name: 'W-NAME' }, headers: h });
+  const ok = await call('POST', `/api/jobs/${id}/queue`, { body: { confirmed: true, name: 'W-NAME', key }, headers: h });
   assert.equal(ok.code, 200);
   assert.equal(ok.body.status, 'queued');
   assert.equal(ok.body.name, 'W-NAME');

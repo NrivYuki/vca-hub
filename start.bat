@@ -1,7 +1,7 @@
 @echo off
 rem vca-hub を起動する。止めるときは、この窓を閉じるか Ctrl+C を押す。
 rem 同じフォルダの node\node.exe を使う。無ければ、この PC に入っている Node.js(22 以上)を使う。
-cd /d "%~dp0"
+pushd "%~dp0"
 set "NODE=%~dp0node\node.exe"
 if not exist "%NODE%" (
     where node >nul 2>nul || (
@@ -11,5 +11,5 @@ if not exist "%NODE%" (
     )
     set "NODE=node"
 )
-"%NODE%" src\main.js
+"%NODE%" "%~dp0src\main.js"
 pause

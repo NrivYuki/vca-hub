@@ -34,9 +34,8 @@ test('許可する範囲: IPv4 と IPv6 の範囲、IPv6 の形で書いた IPv4
 test('許可する範囲の書き損じは、広い範囲として扱わずに、起動を止める', async () => {
   for (const c of ['10.0.0.0/', '10.0.0.0/33', '10.0.0.0/abc', '10.0.0.0/ 8', '999.1.1.1/8', '10.0.0.0/8/9', 'fd00::/129', '']) {
     assert.throws(() => allowList([c]), e => e.code === 'bad-config', JSON.stringify(c));
-    const h = await hubWith({ allow: [c] });
-    await assert.rejects(h.hub.start(), e => e.code === 'bad-config', JSON.stringify(c));
-    await h.done();
+    // 設定の確かめで、ほかの誤りと一緒に出して止める(起動する前に)
+    await assert.rejects(hubWith({ allow: [c] }), e => e.code === 'config' && /allow/.test(e.message), JSON.stringify(c));
   }
 });
 
@@ -52,7 +51,7 @@ test('リモート接続: 許可する範囲の外からの接続は、セッシ
   } finally { await h.done(); }
 });
 
-test('ローカル接続: 機器の待ち受けへつなぎ、機器のアップロードを受ける。許可する範囲の外の機器にはつながない', async () => {
+test('ローカル接続: 機器の待ち受けへつなぎ、機器のアップロードを受ける。許可する範囲の外の機器を書いたら起動しない', async () => {
   let reached = 0;
   const server = await T.listenDevice(0, { kind: 'upload', connectDelay: 0 }, async dev => {
     reached++;
@@ -62,19 +61,21 @@ test('ローカル接続: 機器の待ち受けへつなぎ、機器のアップ
     } catch { /* 閉じられたとき */ }
   });
   const port = server.address().port;
-  // 許可する範囲の外: つなぎに行かない
-  const out = await hubWith({ remote: { enabled: false }, allow: ['10.0.0.0/8'], local: [{ name: '外', host: '127.0.0.1', port }] });
-  await out.hub.start();
-  await new Promise(r => setTimeout(r, 300));
-  assert.equal(reached, 0);
-  assert.ok(out.hub.log.list().some(r => r.event === 'rejected'));
-  await out.done();
-  // 許可する範囲の中: つないで受ける
-  const h = await hubWith({ remote: { enabled: false }, local: [{ name: '中', host: '127.0.0.1', port }] });
-  await h.hub.start();
   try {
-    for (let i = 0; i < 100 && !h.hub.store.list().length; i++) await new Promise(r => setTimeout(r, 50));
-    assert.equal(reached, 1);
-    assert.equal(h.hub.store.list()[0].job, 'LOCAL1');
-  } finally { await h.done(); server.close(); }
+    // 許可する範囲の外: つなぎに行かず、起動しない(黙って一度もつながないまま動き続けないように)
+    const out = await hubWith({ remote: { enabled: false }, allow: ['10.0.0.0/8'], local: [{ name: '外', host: '127.0.0.1', port }] });
+    try {
+      await assert.rejects(out.hub.start(), e => e.code === 'config' && /許可範囲/.test(e.message));
+      await new Promise(r => setTimeout(r, 300));
+      assert.equal(reached, 0);
+    } finally { await out.done(); }
+    // 許可する範囲の中: つないで受ける
+    const h = await hubWith({ remote: { enabled: false }, local: [{ name: '中', host: '127.0.0.1', port }] });
+    await h.hub.start();
+    try {
+      for (let i = 0; i < 100 && !h.hub.store.list().length; i++) await new Promise(r => setTimeout(r, 50));
+      assert.equal(reached, 1);
+      assert.equal(h.hub.store.list()[0].job, 'LOCAL1');
+    } finally { await h.done(); }
+  } finally { server.close(); }
 });

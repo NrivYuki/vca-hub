@@ -75,7 +75,7 @@ test('書き出すファイル: 1 行目 REQ=FIL、2 行目 JOB(付けた名前)
   assert.deepEqual(d.rec.HBOX, ['52.00', '52.00']);
 });
 
-test('書き出しは 名前.vca に上書きし、上書きになることを先に確かめられ、上書きしたことをログに残す', async () => {
+test('書き出しは 名前.vca。上書きになることを先に確かめられ、上書きを確かめたときだけ上書きし、ログに残す', async () => {
   const h = await makeHub(dir => ({ exportDir: path.join(dir, 'out') }));
   try {
     const e = h.hub.store.saveReceived({ body, type: 'TRC', job: 'T-RAW', peer: 'p', crcOk: null });
@@ -84,11 +84,27 @@ test('書き出しは 名前.vca に上書きし、上書きになることを�
     assert.equal(path.basename(r1.file), 'ORDER-7.vca');
     assert.equal(r1.overwrote, false);
     assert.equal(h.hub.exportCheck('ORDER-7').exists, true);
-    assert.equal(h.hub.exportJob(e.id, 'ORDER-7').overwrote, true);
+    assert.throws(() => h.hub.exportJob(e.id, 'ORDER-7'), err => err.code === 'file-exists', '上書きを確かめていなければ上書きしない');
+    assert.equal(h.hub.exportJob(e.id, 'ORDER-7', { overwrite: true }).overwrote, true);
     assert.equal(h.hub.store.get(e.id).name, 'ORDER-7');
     const logs = h.hub.log.list().filter(l => l.event === 'exported');
     assert.equal(logs.length, 2);
     assert.match(logs[0].detail + logs[1].detail, /上書き/);
+  } finally { await h.done(); }
+});
+
+test('確かめた後に同じ名前のファイルが現れても、上書きせず断る。書きかけの一時ファイルも残さない', async () => {
+  const h = await makeHub(dir => ({ exportDir: path.join(dir, 'out') }));
+  try {
+    const e = h.hub.store.saveReceived({ body, type: 'TRC', job: 'T-RAW', peer: 'p', crcOk: null });
+    const out = h.hub.cfg.exportDir;
+    assert.equal(h.hub.exportCheck('LATE').exists, false);
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'LATE.vca'), 'ほかのソフトが置いたもの');
+    assert.throws(() => h.hub.exportJob(e.id, 'LATE'), err => err.code === 'file-exists');
+    assert.equal(fs.readFileSync(path.join(out, 'LATE.vca'), 'utf8'), 'ほかのソフトが置いたもの');
+    assert.deepEqual(fs.readdirSync(out), ['LATE.vca']);
+    assert.ok(!h.hub.log.list().some(l => l.event === 'exported'), '書き出していないので記録しない');
   } finally { await h.done(); }
 });
 

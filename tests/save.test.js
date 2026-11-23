@@ -100,15 +100,18 @@ test('要求 ID の割り当てで保存に失敗したら、番号を進めな�
   try {
     const reg = new Registry({ file: path.join(dir, 'devices.json') });
     const def = { tag: 'T', labels: [], device: { ven: 'V', model: 'M' }, trcfmt: null, zfmt: false, kind: 'download', drill: null, peer: 'p' };
+    // 最初の番号は時刻から決まる(7.2.3.3)
+    const first = String(reg.data.nextId), second = String(reg.data.nextId + 1);
     failRename(Infinity);
     assert.throws(() => reg.nextId());
-    assert.throws(() => reg.save('1000', def));
+    assert.throws(() => reg.save(first, def));
     fs.renameSync = realRename;
     assert.equal(reg.list().length, 0);
-    assert.equal(reg.nextId(), '1000');
-    reg.save('1000', def);
+    assert.equal(reg.nextId(), first);
+    reg.save(first, def);
     reg.save(reg.nextId(), def);
-    assert.deepEqual(reg.list().map(r => r.id), ['1001'], '同じ機器・同じタグの前の要求 ID は消す');
+    assert.deepEqual(reg.list().map(r => r.id), [first, second],
+      '同じ名乗りでも前の要求 ID は消さない(名乗りだけでは機器を見分けられず、ほかの機器の要求 ID を消してしまうため。増えすぎは数の上限で抑える)');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

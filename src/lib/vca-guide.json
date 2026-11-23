@@ -1,0 +1,11 @@
+{
+  "source": "https://github.com/NrivYuki/vca-guide",
+  "commit": "4a315287fcaa11fd9446dae7ccacc8aa03dc763f",
+  "note": "src/ から写した 4 つのファイルの SHA-256(行末を LF にそろえたもの)。写し直したら、ここも書き直す",
+  "files": {
+    "vca-parser.js": "c1249442a42f665add2cdba5605aa765bf6cb1a0244193ec1498944bbe132dfd",
+    "vca-records.js": "e4f434a8ca9b0a3a31a9c9044b4897e0aa0042b2dd78fb4f4eca0a43f5ffc6cd",
+    "vca-session.js": "3d347eb0f260d73d3cf322290e16efe9caac69402ecc6372e23ae31380a5b6ea",
+    "vca-tcp.js": "f478bb8fd2099a86c5cec1072b705d3fad2bf2de04cf420d2c27b55ca2f838a7"
+  }
+}

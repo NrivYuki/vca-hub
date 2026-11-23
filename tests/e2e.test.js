@@ -99,7 +99,7 @@ test('加工機: 自動フォーマット初期化(候補の 1 つ目の形式�
     assert.equal(VCA.value(d, 'DO'), 'R');
     assert.deepEqual(d.rec.HBOX, ['52.00', '52.00']);
     assert.equal(VCA.value(d, 'ETYP'), '1');
-    assert.deepEqual(d.rec.LIND, ['?'], '持っていない項目は ?(5.1.4)');
+    assert.deepEqual(d.rec.LIND, ['?', '?'], '持っていない項目は ?。左右一対のレコードは左右とも(5.1.4)');
     assert.deepEqual(d.rec.CLIENT, ['?'], '除去した個人情報は送らない');
     assert.equal(d.rec.IPD, undefined, '一覧にない項目は送らない(7.2.4)');
     assert.equal(d.traces[0].radii.length, 512);
@@ -108,7 +108,7 @@ test('加工機: 自動フォーマット初期化(候補の 1 つ目の形式�
   await waitStatus(a1.id, 'sent');
 });
 
-test('加工機: 初期化しない機器(REQ=EDG)には、プリセットの項目と元の形式の玉型を送る(7.2.6.2)', async () => {
+test('加工機: 初期化しない機器(REQ=EDG)には、プリセットの項目と、形式 1 の玉型を送る(7.2.6.2・7.2.8)', async () => {
   const a1 = hub.store.list().find(e => e.job === 'A0001');
   hub.store.queue(a1.id, 'A0001', { replace: true });
   const edger = await connect();
@@ -117,7 +117,7 @@ test('加工機: 初期化しない機器(REQ=EDG)には、プリセットの項
     assert.equal(dl.status, 0);
     const d = dl.response;
     assert.deepEqual(d.rec.IPD, ['31.5', '31.0']);
-    assert.deepEqual(d.rec.LMATTYPE, ['?'], 'プリセットの項目で持っていないものは ?(5.1.4)');
+    assert.deepEqual(d.rec.LMATTYPE, ['?', '?'], 'プリセットの項目で持っていないものは ?。左右一対のレコードは左右とも(5.1.4)');
     assert.equal(d.rec.HBOX, undefined, 'プリセットに無い項目は送らない');
     assert.equal(d.traces[0].radii.length, 360);
   } finally { close(edger); }
@@ -132,16 +132,20 @@ test('加工機が最後のデータに ACK を返さなければ、送信済み
   await new Promise(r => sock.once('connect', r));
   try {
     sock.write(Buffer.from(VCA.buildPacket([['REQ', 'EDG'], ['JOB', 'A0001']]), 'latin1'));
-    await new Promise(r => setTimeout(r, FAST.ack * 1000 + 500));
-    assert.equal(hub.store.get(a1.id).status, 'queued');
+    const until = async (cond, ms) => { for (const t0 = Date.now(); !cond() && Date.now() - t0 < ms;) await new Promise(r => setTimeout(r, 20)); return cond(); };
+    // ホストは要求を受けてデータを押さえる(応答を送った)。ACK が来ないまま再送の上限を過ぎたら放す
+    assert.ok(await until(() => hub.store.sending.has(a1.id), 3000), '要求を受けてデータを押さえる');
+    assert.ok(await until(() => !hub.store.sending.has(a1.id), FAST.ack * 1000 * 5 + 2000), '再送の上限を過ぎたら放す');
+    assert.equal(hub.store.get(a1.id).status, 'queued', '送信済みにしない');
+    assert.ok(hub.log.list().some(l => l.event === 'download-unconfirmed' && l.detail.includes(a1.id)), '届いたか分からないことを記録に残す');
   } finally { sock.destroy(); }
 });
 
-test('割り当てていない要求 ID は STATUS=5、規格にある非対応種別と規格にない種別は 16、REQ なしは ANS=ERR と 18', async () => {
+test('割り当てていない要求 ID は STATUS=5、規格にある非対応種別(CMD)と規格にない種別は 16、REQ なしは ANS=ERR と 18', async () => {
   const dev = await connect();
   try {
     assert.equal((await dev.request('99999', { job: 'A0001' })).status, 5);
-    assert.equal((await dev.request('GEN', { job: 'A0001' })).status, 16);
+    assert.equal((await dev.request('CMD', { job: 'A0001' })).status, 16);
     const sock = net.connect(port, '127.0.0.1');
     await new Promise(r => sock.once('connect', r));
     const got = new Promise(r => { let s = ''; sock.on('data', b => { s += b.toString('latin1'); if (s.includes(VCA.CH.GS)) r(s); }); });
@@ -183,7 +187,12 @@ test('つなぎ直しても、前の接続で割り当てた要求 ID を使え�
   } finally { close(b); }
 });
 
-test('ログにレコードの中身(氏名など)が書かれていない', () => {
+test('ログにレコードの中身(氏名など)が書かれていない', async () => {
+  const dev = await connect({ kind: 'upload' });
+  try {
+    const r = await dev.request('TRC', { job: 'LOGCHK', records: [['DEV', 'TRC']], data: tracerRecords });
+    assert.equal(r.status, 0);
+  } finally { close(dev); }
   const logDir = path.join(dir, 'log');
   const text = fs.readdirSync(logDir).map(f => fs.readFileSync(path.join(logDir, f), 'utf8')).join('');
   assert.ok(text.includes('"event":"received"'));
@@ -197,12 +206,21 @@ test('許可していない IP からの接続は切断される(判定のみ確
   assert.equal(isAllowed('203.0.113.5', ['127.0.0.1/32', '192.168.0.0/16']), false);
 });
 
+// 行末は、git の設定(取り出すときの CRLF への変換)で変わるので、そろえてから比べる
+const readLF = p => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+const LIB = path.join(__dirname, '..', 'src', 'lib');
+const COPIED = JSON.parse(fs.readFileSync(path.join(LIB, 'vca-guide.json'), 'utf8'));
+
+test('写した 4 つのライブラリは、写したときのまま(vca-hub の中で書き換えていない。設計書 3 章)', () => {
+  const sha = p => require('node:crypto').createHash('sha256').update(readLF(p)).digest('hex');
+  assert.deepEqual(Object.keys(COPIED.files).sort(), ['vca-parser.js', 'vca-records.js', 'vca-session.js', 'vca-tcp.js']);
+  for (const [f, hash] of Object.entries(COPIED.files)) {
+    assert.equal(sha(path.join(LIB, f)), hash, `${f} が src/lib/vca-guide.json の記録と違います(vca-guide で直して写し直し、記録も書き直す)`);
+  }
+});
+
 test('写した 4 つのライブラリは vca-guide の src と同じ(設計書 3 章)', t => {
   const guide = path.join(__dirname, '..', '..', 'vca-guide', 'src');
-  if (!fs.existsSync(guide)) { t.skip('vca-guide が隣のフォルダにありません'); return; }
-  // 行末は、git の設定(取り出すときの CRLF への変換)で変わるので、そろえてから比べる
-  const read = p => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
-  for (const f of ['vca-parser.js', 'vca-records.js', 'vca-session.js', 'vca-tcp.js']) {
-    assert.equal(read(path.join(__dirname, '..', 'src', 'lib', f)), read(path.join(guide, f)), f);
-  }
+  if (!fs.existsSync(guide)) { t.skip('vca-guide が隣のフォルダにありません(写したときのままかは、上のテストで確かめる)'); return; }
+  for (const f of Object.keys(COPIED.files)) assert.equal(readLF(path.join(LIB, f)), readLF(path.join(guide, f)), f);
 });

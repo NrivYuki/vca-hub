@@ -75,7 +75,8 @@ module.exports = {
               giving = entry;
               socket.write(`JOB=${entry.name}\r\n` + toLines(recs) + 'END\r\n');
             } else if (cmd === 'ACK' && giving) {
-              io.markSent(giving.id, `${name} ${peer}`);
+              // 送信済みを書けなくても(ディスク不足など)止まらない。vca-hub が送信済みとして押さえたまま、あとで書き直す
+              try { io.markSent(giving.id, `${name} ${peer}`); } catch (err) { io.log('warn', { detail: `送信済みを書けません(${err.code || err.message})` }); }
               giving = null;
             } else socket.write('NG unknown\r\n');
           });
@@ -91,9 +92,13 @@ module.exports = {
       upload({ dest, name, records }, io) {
         return new Promise((resolve, reject) => {
           const socket = net.connect(dest.port, dest.host);
-          const timer = setTimeout(() => { socket.destroy(); reject(new Error('応答がありません')); }, (io.timeouts.packet || 12) * 1000);
-          socket.on('error', e => { clearTimeout(timer); reject(e); });
-          socket.on('connect', () => socket.write(`PUT ${name}\r\n` + toLines(records) + 'END\r\n'));
+          // データを書いた後で応答が来なければ、届いたか分からない(code 'unconfirmed'。vca-hub が送れなかったときと分けて知らせる)
+          let written = false;
+          const unconfirmed = why => Object.assign(new Error(why), { code: written ? 'unconfirmed' : 'timeout' });
+          const timer = setTimeout(() => { socket.destroy(); reject(unconfirmed('応答がありません')); }, (io.timeouts.packet || 12) * 1000);
+          socket.on('error', e => { clearTimeout(timer); reject(written ? unconfirmed(e.code || e.message) : e); });
+          socket.on('close', () => { clearTimeout(timer); reject(unconfirmed('応答の前に切れました')); });
+          socket.on('connect', () => { socket.write(`PUT ${name}\r\n` + toLines(records) + 'END\r\n'); written = true; });
           lines(socket, line => {
             clearTimeout(timer);
             socket.end();

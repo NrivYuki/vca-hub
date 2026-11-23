@@ -76,14 +76,22 @@ module.exports = {
       conditions: hub.data.get(query.id), required, options: { ETYP, BEVP, POLISH },
       needs: { position: [...NEEDS_POSITION], m: [...NEEDS_M], c: [...NEEDS_C] },
     }));
+    // 送信待ちのものの条件は変えない・外さない(人が送信前の確認で見た条件と違うものを、加工機へ渡さないため)。
+    // 変えるときは、先に送信待ちから外し、確かめ直して送信待ちに戻してもらう
+    const notQueued = id => {
+      const e = hub.store.get(id);
+      if (!e) throw Object.assign(new Error('データがありません'), { code: 'not-found' });
+      if (e.status === 'queued') throw Object.assign(new Error('送信待ちのデータの加工条件は変えられません。先に送信待ちから外してください'), { code: 'queued-change' });
+    };
     hub.route('POST', 'conditions', ({ body }) => {
-      if (!hub.store.get(body.id)) throw Object.assign(new Error('データがありません'), { code: 'not-found' });
+      notQueued(body.id);
       const c = normalize(body.conditions || {});
       hub.data.set(body.id, c);
       hub.log('info', { detail: `${body.id} に加工条件を付けた ${records(c).map(r => `${r[0]}=${r.slice(1).join(';')}`).join(' ')}` });
       return { conditions: c };
     });
     hub.route('POST', 'clear', ({ body }) => {
+      notQueued(body.id);
       hub.data.remove(body.id);
       hub.log('info', { detail: `${body.id} の加工条件を外した` });
       return { conditions: null };
@@ -100,8 +108,21 @@ module.exports = {
       // 加工機が項目を指定していれば(初期化の一覧・プリセット)、その項目だけを置き換える。
       // 送るレコードにすでにある項目(BEVP に添えて送る BEVM・BEVC の ? など)も置き換える。求めていない項目は送らない
       const wanted = to.profile && to.profile.labels && to.profile.labels.length ? new Set(to.profile.labels.map(l => String(l).toUpperCase())) : null;
+      // 一覧に BEVP があれば、BEVP の値によって要る BEVM・BEVC も送る(7.2.4.3)
+      if (wanted && wanted.has('BEVP')) { wanted.add('BEVM'); wanted.add('BEVC'); }
       const present = new Set(recs.map(r => String(r[0]).toUpperCase()));
       let out = recs;
+      // 別の PC・共有フォルダへは PROC・PROCBLK がそのまま残る。人が付けた条件と同じラベルの機器ごとの値があると、
+      // 受け手がそちらを優先して、人が確かめたのと違う条件が加工機に届くので、その行を外す(加工機へ直接渡すときは、本体が先に当てている)
+      if (to.kind !== 'device') {
+        const mine = new Set(records(c).map(r => r[0]));
+        out = out.filter(r => {
+          const l = String(r[0]).toUpperCase();
+          if (l === 'PROC') return !mine.has(String(r[1] || '').split(';')[0].trim().toUpperCase());
+          const m = l.match(/^\d+!(.+)$/);
+          return !(m && mine.has(m[1]));
+        });
+      }
       for (const r of records(c)) if (!wanted || wanted.has(r[0]) || present.has(r[0])) out = hub.vca.setRecord(out, ...r);
       return out;
     });

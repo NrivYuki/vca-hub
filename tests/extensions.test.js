@@ -218,7 +218,7 @@ test('通信方式 text-line: 受け取ったものは名前なしで保存し�
     assert.equal(VCA.value(parsed, 'JOB'), 'TL-1');
     assert.equal(parsed.traces.length, 2);
     got.socket.write('ACK\r\n');
-    await new Promise(r => setTimeout(r, 100));
+    for (const t0 = Date.now(); !(h.hub.store.get(e.id).status === 'sent') && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 20));
     got.socket.destroy();
     assert.equal(h.hub.store.get(e.id).status, 'sent');
   } finally { await h.done(); }
@@ -238,11 +238,11 @@ test('通信方式の拡張(io.reserve)と VCA の加工機は、渡している
     assert.equal((await edgerRequest(h.ports.remote, 'TL-2')).status, 11, 'VCA の加工機には STATUS=11(表 A.24)');
     // ACK の前に切れたら、送信待ちに戻り、VCA の加工機が受け取れる
     first.socket.destroy();
-    await new Promise(r => setTimeout(r, 100));
+    for (const t0 = Date.now(); !(h.hub.store.findQueued('TL-2')) && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 20));
     assert.equal(h.hub.store.findQueued('TL-2').id, e.id);
     const r = await edgerRequest(h.ports.remote, 'TL-2');
     assert.equal(r.status, 0);
-    await new Promise(r => setTimeout(r, 100));
+    for (const t0 = Date.now(); !(h.hub.store.get(e.id).status === 'sent') && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 20));
     assert.equal(h.hub.store.get(e.id).status, 'sent');
     assert.equal(h.hub.store.get(e.id).sent.length, 1);
   } finally { await h.done(); }

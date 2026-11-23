@@ -101,7 +101,7 @@ test('2 台の加工機が同時に同じジョブを求めても、データを
     const got = r.find(x => x.status === 0), busy = r.find(x => x.status === 11);
     assert.ok(got.response.rec.DBL && got.response.traces.length === 1, 'STATUS=0 の方はジョブのデータを受け取る');
     assert.ok(!busy.response.rec.DBL && busy.response.traces.length === 0, 'STATUS=11 の方にはジョブのデータを入れない');
-    await wait(100);
+    for (const t0 = Date.now(); !(h.hub.store.get(h.id).status === 'sent') && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 20));
     assert.equal(h.hub.store.get(h.id).status, 'sent');
     assert.equal(h.hub.store.get(h.id).sent.length, 1, '送信の記録は 1 件');
     assert.equal((await b.request('EDG', { job: 'J1', dev: 'EDG', ven: 'B', model: 'B' })).status, 1, '送り終えた後はジョブが無い(STATUS=1)');
@@ -121,7 +121,7 @@ test('加工機が ACK を返す前に切れたら、送信済みにせず送信
     assert.equal(h.unconfirmed().length, 1, '受け取ったか分からないことを記録に残す');
     const r = await b.request('EDG', { job: 'J1', dev: 'EDG', ven: 'B', model: 'B' });
     assert.equal(r.status, 0);
-    await wait(100);
+    for (const t0 = Date.now(); !(h.hub.store.get(h.id).status === 'sent') && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 20));
     assert.equal(h.hub.store.get(h.id).status, 'sent');
   } finally { sock.destroy(); b.socket.destroy(); await h.done(); }
 });

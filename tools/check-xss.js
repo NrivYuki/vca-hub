@@ -57,9 +57,15 @@ async function main() {
       job: `J${TAG}`,
       data: [['DBL', '18'], ['ETYP', TAG], ['TRCFMT', '1', '4', TAG, 'R', TAG], ['R', '2400', '2400', '2400', '2400'], ['TRCFMT', '1', '4', 'E', TAG, 'F'], ['R', '2400', '2400', '2400', '2400']],
     });
+    // 送り出せるジョブ(送り出せない理由が無いので、送る前の確認の画面を開ける)。値と送り先の名前に HTML を入れる
+    const up2 = await dev.request(ini.requestId || 'TRC', {
+      job: 'OK1',
+      data: [['DO', 'R'], ['DBL', '18'], ['ETYP', TAG], ['TRCFMT', '1', '4', 'E', 'R', 'F'], ['R', '2400', '2400', '2400', '2400']],
+    });
     dev.socket.destroy();
-    console.log(`アップロード: STATUS=${up.status}`);
-    const id = hub.store.list()[0].id;
+    console.log(`アップロード: STATUS=${up.status}・${up2.status}`);
+    const id = hub.store.list().find(e => e.job !== 'OK1').id;
+    const okId = hub.store.list().find(e => e.job === 'OK1').id;
 
     // 2. ブラウザで管理画面を開き、各画面を表示させる
     const prof = path.join(dir, 'profile');
@@ -73,15 +79,22 @@ async function main() {
     const c = await cdp(target.webSocketDebuggerUrl);
     await c.send('Runtime.enable');
     await wait(2000);
+    // 各段の式は、その画面が本当に出たときだけ true を返す(出ないまま OK としないため)
     const steps = [
-      ['一覧', 'true'],
-      ['詳細', `select(${JSON.stringify(id)}).then(() => true)`],
-      ['内容・原文のタブ', `(document.querySelectorAll('[data-view]').forEach(b => b.click()), true)`],
-      ['送る前の確認(送信待ち)', `(document.getElementById('btnQueue') && document.getElementById('btnQueue').click(), true)`],
+      ['一覧', `document.querySelectorAll('#list li').length >= 2`],
+      ['詳細', `select(${JSON.stringify(id)}).then(() => !!current && current.id === ${JSON.stringify(id)})`],
+      ['内容・原文のタブ', `(document.querySelectorAll('[data-view]').forEach(b => b.click()), document.body.innerText.includes('ONERROR'))`],
+      ['送る前の確認(送り先)', `select(${JSON.stringify(okId)}).then(() => openConfirm('send')).then(() => document.getElementById('confirm').open && document.getElementById('confirmKv').innerText.includes('onerror'))`],
+      ['送る前の確認を閉じる', `(document.getElementById('confirm').close(), true)`],
       ['記録', `(document.querySelectorAll('[data-tab]').forEach(b => b.click()), true)`],
     ];
     for (const [name, expr] of steps) {
-      await c.evaluate(expr);
+      const shown = await c.evaluate(expr);
+      if (shown.exceptionDetails || !(shown.result && shown.result.value === true)) {
+        console.log(`NG  ${name}: 画面を出せず、確かめられない(${shown.exceptionDetails ? shown.exceptionDetails.text : JSON.stringify(shown.result && shown.result.value)})`);
+        failed++;
+        break;
+      }
       await wait(800);
       const r = await c.evaluate('window.__xss === 1');
       const hit = r.result && r.result.value === true;

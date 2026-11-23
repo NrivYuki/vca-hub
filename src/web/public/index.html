@@ -232,7 +232,7 @@
         <table><thead><tr><th>要求 ID</th><th>機器</th><th>メーカー・機種</th><th>相手</th></tr></thead><tbody id="devices"></tbody></table>
         <div class="about">
           <b>このツールの前提</b>
-          <p>受け取った VCA のデータを、この PC の保存先に残し、加工機・送り先・共有フォルダへ中継します。データの中身(レコードの値)は変えません。</p>
+          <p>受け取った VCA のデータを、この PC の保存先に残し、加工機・送り先・共有フォルダへ中継します。レコードの値は変えません。送るときは送り先に合わせて組み立て直し、規格が求める形にそろえるもの・送らないもの(サグ・注記など)があります。それらは送る前の確認に出ます。</p>
           <p>受け取ったデータは、名前を付けるまでどこへも渡しません。名前は、加工機・送り先・共有フォルダへのジョブ番号になります。加工機は、送信待ちのデータを名前で求めて受け取ります。同じ名前で送信待ちにできるのは 1 件だけです。</p>
           <p>拡張を入れると、送るときに拡張が項目を足したり変えたりします(加工条件、メーカー別の項目など)。何をするかは、詳細と送る前の確認に「拡張」として出ます。受け取った中身(保存したデータ)は、拡張も変えません。</p>
           <p>設定は、vca-hub のフォルダの config.json で変えます(変えたら起動し直します)。使う拡張と、口ごとの通信方式(VCA かメーカーの通信か)も、ここで選びます。</p>
@@ -295,6 +295,7 @@
     <label class="check"><input type="checkbox" id="confirmCheck"> 名前・左右・玉型の形を確かめました</label>
   </div>
   <div class="df">
+    <span id="confirmBusy" hidden>送っています。結果が出るまでお待ちください</span>
     <button id="confirmCancel" type="button">やめる</button>
     <button class="on" id="confirmOk" type="button" disabled>送信待ちにする</button>
   </div>
@@ -330,7 +331,13 @@ async function api(path, opts = {}) {
 // ---- 状態 ----
 const STATUS = { received: '未送信', queued: '送信待ち', sent: '送信済み' };
 const unnamed = e => e.status === 'received' && !e.name;
-const statusText = e => (unnamed(e) ? '名前なし' : STATUS[e.status] || e.status);
+// 加工機へ渡している途中のものと、索引を戻したときの印は、一覧でも分かるように状態に添える
+const statusText = e => (unnamed(e) ? '名前なし' : (STATUS[e.status] || e.status) + (e.sending ? '(加工機へ渡している途中)' : '') +
+  (e.sentUnrecorded ? '(加工機は受け取ったが、送信済みを書けていない。書き直す)' : '') +
+  (e.uploading ? '(送り先へ送っている途中)' : '') +
+  (e.unqueuedByCheck ? '(渡す直前の検査で送信待ちから外した)' : '') +
+  (e.refused && e.status === 'queued' ? `(加工機 ${e.refused.device || e.refused.peer} に渡せなかった。理由は詳細に)` : '') +
+  (e.unqueuedByRecovery ? '(索引を戻したので送信待ちから外した)' : e.recovered ? '(索引を戻したときに登録し直した)' : ''));
 const statusClass = e => (unnamed(e) ? 'unnamed' : e.status);
 function markHtml(check) {
   if (!check) return '';
@@ -345,7 +352,7 @@ function extHtml(list) {
 function issuesHtml(check) {
   if (!check) return '';
   return check.blockers.map(s => `<li class="e"><b>送信できません</b>${esc(s)}</li>`).join('') +
-    check.notices.map(s => `<li class="w"><b>注意</b>${esc(s)}(値は変えずにそのまま送ります)</li>`).join('');
+    check.notices.map(s => `<li class="w"><b>注意</b>${esc(s)}</li>`).join('');
 }
 
 // ---- 玉型の図: 正面から見た向き。右眼を左、左眼を右に、DBL の間をあけて並べる ----
@@ -427,6 +434,9 @@ function renderSpec() {
 const FILTERS = { all: () => true, unnamed, queued: e => e.status === 'queued', sent: e => e.status === 'sent' };
 const EMPTY = { all: 'まだ受信していません。', unnamed: '名前なしのデータはありません。', queued: '送信待ちのデータはありません。', sent: '送信済みのデータはありません。' };
 function renderList() {
+  // 一覧から無くなったデータの玉型の図は手放す(画面を開いたままでも、消えたデータの分が溜まらないように)
+  const ids = new Set(entries.map(e => e.id));
+  for (const id of shapes.keys()) if (!ids.has(id)) shapes.delete(id);
   const rows = entries.filter(FILTERS[filter]);
   $('listEmpty').hidden = rows.length > 0;
   $('listEmpty').textContent = EMPTY[filter];
@@ -460,10 +470,18 @@ async function fillShapes() {
 }
 
 // ---- 選んだデータ ----
+let selectSeq = 0;
 async function select(id) {
   selected = id;
+  const seq = ++selectSeq;
   for (const li of $('list').children) li.classList.toggle('sel', li.dataset.id === id);
-  try { current = await api('/api/jobs/' + id); } catch { current = null; }
+  let got = null;
+  try { got = await api('/api/jobs/' + id); } catch { got = null; }
+  // 後から選んだものの応答が先に届いていたら、古い応答では書き換えない(一覧で選んだ行と詳細が食い違わないように)
+  if (seq !== selectSeq) return;
+  // 確認の画面を開いている間は、確かめている中身を差し替えない(送るときにサーバーが中身の変化を確かめる)
+  if (busy || $('confirm').open) return;
+  current = got;
   renderDetail();
 }
 function renderDetail() {
@@ -486,10 +504,14 @@ function renderDetail() {
   const t = e.traces;
   $('kv').innerHTML = [
     ['名前', e.name || '名前なし'], ['受け取った JOB', e.job || 'なし'], ['状態', statusText(e)], ['受信日時', fmtTime(e.receivedAt)],
+    ...(e.refused ? [['加工機に渡せなかった理由', `${fmtTime(e.refused.at)} ${e.refused.device || e.refused.peer}: ${e.refused.message}`]] : []),
     ['受信元', e.peer], ['要求の種類', e.type], ['CRC', e.crcOk === null ? 'なし' : e.crcOk ? '正しい' : '合わない'],
     // 眼・形式・角度のモードは、受け取った TRCFMT の値がそのまま入るので、全てエスケープする
     ['玉型', t.length ? t.map(x => esc(`${EYE[x.eye] || x.eye} 形式 ${x.fmt ?? '-'}・${x.n} 点・${x.mode}${x.circ != null ? `・周長 ${num(x.circ)} mm` : ''}`)).join('<br>') : 'なし'],
     ['除いた個人情報', e.piiRemoved.length ? esc(e.piiRemoved.join('、')) : 'なし'],
+    // 電源断などで索引を 1 つ前のものから戻したときの印(設計書 6 章)。どれを確かめ直せばよいかが画面で分かるように
+    ...(e.recovered ? [['索引の復旧', '索引を戻したときに、受け取ったときの記録から登録し直した。名前と状態を確かめ直す']] : []),
+    ...(e.unqueuedByRecovery ? [['索引の復旧', '索引を戻したときに、送信待ちから外した(加工機へ渡したかもしれない)。渡したかを確かめてから送信待ちに戻す']] : []),
     ...(e.extensions || []).map(x => [`拡張 ${esc(x.title)}`, x.lines.map(esc).join('<br>')]),
     ['送った記録', e.sent.length ? e.sent.map(s => `${esc(fmtTime(s.at))} ${esc(s.to)}`).join('<br>') : 'なし'],
   ].map(([k, v]) => `<tr><th>${k}</th><td>${['玉型', '除いた個人情報', '送った記録'].includes(k) || k.startsWith('拡張 ') ? v : esc(v)}</td></tr>`).join('');
@@ -573,10 +595,27 @@ const MODES = {
 };
 const REASON = {
   'bad-name': '使えない名前です(半角の英数字・記号で 12 文字まで。ファイル名に使えない文字、;、..、CON などの装置の名前は使えません)',
-  'no-export-dir': '書き出し先が設定されていません', 'no-destination': '送り先が設定されていません',
+  'sending': '加工機へ渡している途中です。渡し終えてから操作してください',
+  'uploading': '送り先へ送っている途中です。送り終えてから、結果を確かめてください',
+  'upload-unconfirmed': '送り先に届いたか分かりません(送った後で接続が切れたなど)。送り直す前に、送り先で受け取ったかを確かめてください',
+  'export-failed': '書き出し先に書けません。共有フォルダの PC が動いているか、書き込めるかを確かめてください',
+  'not found': 'データがありません(ほかの操作で削除されました)',
+  'not-found': 'データがありません(ほかの操作で削除されました)',
+  'changed': '確かめている間に、送る中身(拡張の条件や知らせ)が変わりました。画面を読み直したので、もう一度確かめてください',
+  'ext-send': '拡張が送るデータを作れませんでした。記録の画面で理由を確かめてください',
+  'no-protocol': '送り先の通信方式が使えません(拡張が入っていない、など)',
+  'queued-change': '送信待ちのものの条件は変えられません。先に送信待ちから外してください',
+  'bad-request': '要求の形が正しくありません。画面を読み直してください',
+  'too-large': '要求が大きすぎます',
+  'file-exists': '書き出し先に同じ名前のファイルがあります',
+  'no-export-dir': '書き出し先が設定されていません', 'queued-rename': '送信待ちのデータの名前は変えられません。名前を変えるときは、先に送信待ちから外してください', 'file-busy': '書き出し先の同じ名前のファイルを、ほかのソフトが開いています。閉じてから書き出してください', 'no-destination': '送り先が設定されていません',
 };
-let mode = 'queue', overwrite = false, taken = null, failure = null;
-function openConfirm(m) {
+let mode = 'queue', overwrite = false, taken = null, failure = null, busy = false;
+async function openConfirm(m) {
+  if (!current || busy) return;
+  // 開くときに詳細を読み直す(ほかの画面や拡張で条件が変わっていても、いまの中身を確かめてもらうため)
+  try { current = await api('/api/jobs/' + current.id); } catch (err) { alert(REASON[(err.body || {}).error] || 'データを読めません'); await refresh(); return; }
+  renderDetail();
   mode = m;
   const e = current, M = MODES[m];
   $('confirmTitle').textContent = M.title;
@@ -593,10 +632,49 @@ function openConfirm(m) {
   drawShapes($('confirmPlot'), e.traces, { labels: true, dbl: dblOf(e), pad: 0.08 });
   refreshConfirm();
 }
+/** 加工するレンズ(DO)。玉型の眼と違えば、反転して渡すことを添える */
+function lensText(e) {
+  const rec = (e.records || []).find(r => r.label === 'DO');
+  const v = rec ? String(rec.fields[0] || '').trim() : '';
+  const name = { R: '右眼', L: '左眼', B: '両眼', N: 'なし' }[v];
+  if (!name) return '玉型のある眼から決める(DO なし)';
+  const eyes = new Set(e.traces.map(t => t.eye));
+  const other = (v === 'R' || v === 'L') && !eyes.has(v) && eyes.size;
+  if (!other) return `${name}(DO=${v})`;
+  return `${name}(DO=${v})。玉型は反対眼のものだけなので、${impliedSize(e) ? '左右の周長の差を残すため、反転せずに受け取った向きのまま渡します(加工機が反転します)' : '反転して渡します'}`;
+}
+/** 片眼の玉型と、左右で違う CIRC・CIRC3D があり、BSIZ・CSIZ が無いか分からないか(5.4.9.4。vca-hub はこのとき反転しない) */
+function impliedSize(e) {
+  if (new Set(e.traces.map(t => t.eye)).size !== 1) return false;
+  const recs = label => (e.records || []).filter(r => r.label === label);
+  const unknown = label => recs(label).every(r => r.fields.every(v => String(v).trim() === '' || String(v).trim() === '?'));
+  if (!unknown('BSIZ') || !unknown('CSIZ')) return false;
+  return ['CIRC', 'CIRC3D'].some(l => recs(l).some(r => {
+    const f = r.fields.map(v => String(v).trim());
+    return f[0] !== '' && f[1] !== '' && Number.isFinite(+f[0]) && Number.isFinite(+f[1]) && +f[0] !== +f[1];
+  }));
+}
+/** 取り違えにつながりやすい操作の知らせ(名前が受け取った JOB と違う・送信済み・同じ JOB の新しいデータがある) */
+function mixUpNotes(e, name) {
+  const out = [];
+  if (name && e.job && name !== e.job) {
+    out.push(name.toUpperCase() === e.job.toUpperCase()
+      ? `名前 ${name} は、受け取った JOB (${e.job}) と大文字・小文字が違います。加工機は大文字・小文字を区別して求めます`
+      : `名前 ${name} は、受け取った JOB (${e.job}) と違います。この名前を求めた加工機に、この玉型が渡ります`);
+  }
+  if (e.sent && e.sent.length) {
+    const last = e.sent[e.sent.length - 1];
+    out.push(`このデータは前に送っています(${fmtTime(last.at)} ${last.to})。同じレンズを 2 度加工しないか確かめてください`);
+  }
+  const newer = e.job && entries.find(x => x.id !== e.id && x.job === e.job && String(x.receivedAt) > String(e.receivedAt));
+  if (newer) out.push(`同じ JOB (${e.job}) の、後に受け取ったデータがあります(${fmtTime(newer.receivedAt)})。測り直したものなら、そちらを選んでください`);
+  return out;
+}
+const STATUS_MEANING = { 1: 'ジョブが無い', 2: '保存できない', 3: 'その他', 4: 'この機器には合わない', 5: '初期化が必要', 6: 'ジョブ番号が正しくない', 7: '項目が足りない', 8: 'ホストの誤り', 9: '機器とホストが合わない', 10: '値が範囲の外', 11: '受け手が忙しい', 17: '玉型の形式が合わない' };
 async function refreshConfirm() {
   const e = current, name = $('confirmName').value.trim();
   $('confirmKv').innerHTML = [
-    ['名前', name || '(まだ付けていません)'], ['左右', e.traces.map(t => EYE[t.eye] || t.eye).join('・') || 'なし'], ['送る先', MODES[mode].to()],
+    ['名前', name || '(まだ付けていません)'], ['加工するレンズ', lensText(e)], ['玉型', e.traces.map(t => EYE[t.eye] || t.eye).join('・') || 'なし'], ['送る先', MODES[mode].to()],
   ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('');
   if (taken && taken !== name) taken = null;
   $('replaceRow').hidden = !taken;
@@ -604,9 +682,13 @@ async function refreshConfirm() {
     (failure ? `<li class="e"><b>できませんでした</b>${esc(failure)}</li>` : '') +
     (taken ? `<li class="w"><b>同じ名前</b>名前 ${esc(taken)} のデータが、すでに送信待ちです。</li>` : '') +
     (overwrite ? '<li class="w"><b>上書き</b>同じ名前のファイルが書き出し先にあります。書き出すと上書きされます。</li>' : '') +
-    e.check.notices.map(s => `<li class="w"><b>注意</b>${esc(s)}(値は変えずにそのまま送ります)</li>`).join('') +
+    (mode === 'export' ? '<li class="w"><b>注意</b>書き出したファイルには、個人情報が含まれることがあります。書き出し先を誰が読めるかは、利用者が管理します。</li>' : '') +
+    mixUpNotes(e, name).map(s => `<li class="w"><b>取り違え</b>${esc(s)}</li>`).join('') +
+    e.check.notices.map(s => `<li class="w"><b>注意</b>${esc(s)}</li>`).join('') +
     extHtml(e.extensions);
-  $('confirmOk').disabled = !$('confirmCheck').checked || !name || (taken && !$('confirmReplace').checked);
+  $('confirmOk').disabled = busy || !$('confirmCheck').checked || !name || (taken && !$('confirmReplace').checked);
+  $('confirmCancel').disabled = busy;
+  $('confirmBusy').hidden = !busy;
   if (mode === 'export' && name) {
     let exists = false;
     try { exists = (await api('/api/export-check?name=' + encodeURIComponent(name))).exists; } catch { /* 名前が使えなければ送るときに断られる */ }
@@ -621,27 +703,56 @@ $('confirmName').oninput = () => { failure = null; refreshConfirm(); };
 $('confirmDest').onchange = refreshConfirm;
 $('confirmCheck').onchange = refreshConfirm;
 $('confirmReplace').onchange = refreshConfirm;
-$('confirmCancel').onclick = () => $('confirm').close();
+$('confirmCancel').onclick = () => { if (!busy) $('confirm').close(); };
+// 送っている途中は Esc でも閉じない(閉じても要求は止まらず、結果が見えなくなるため)
+$('confirm').addEventListener('cancel', ev => { if (busy) ev.preventDefault(); });
+$('confirm').addEventListener('close', () => { if (selected) select(selected); });
 $('confirmOk').onclick = async () => {
+  if (busy || !current) return;
   const name = $('confirmName').value.trim();
-  const body = { confirmed: true, name };
+  // key: 確かめた中身の値(サーバーが送る直前に作り直して比べる)
+  const body = { confirmed: true, name, key: current.confirmKey };
   if (mode === 'send') body.to = $('confirmDest').value;
   if (taken === name && $('confirmReplace').checked) body.replace = true;
-  $('confirmOk').disabled = true;
+  // 上書きは、この画面で知らせたときだけ求める(知らせた後に現れたファイルは、断られてから知らせ直す)
+  if (mode === 'export' && overwrite) body.overwrite = true;
+  busy = true;
+  refreshConfirm();
   try {
     await api(`/api/jobs/${current.id}/${mode}`, { method: 'POST', body: JSON.stringify(body) });
   } catch (err) {
     const b = err.body || {};
+    busy = false;
+    // 中身が変わった: 読み直して、もう一度確かめてもらう
+    if (b.error === 'changed') {
+      try { current = await api('/api/jobs/' + current.id); } catch { /* 読めなければ次の読み直しで */ }
+      $('confirmCheck').checked = false;
+      failure = REASON.changed;
+      drawShapes($('confirmPlot'), current.traces, { labels: true, dbl: dblOf(current), pad: 0.08 });
+      refreshConfirm();
+      return;
+    }
+    // vca-hub に届かなかった(止まっている・接続が切れた)。送り先へ送る途中なら、届いたか分からない
+    if (!err.body) {
+      failure = 'vca-hub に接続できません。start.bat の窓が開いているか確かめてください' + (mode === 'send' ? '。送っている途中だったときは、送り先に届いたか分からないので、送り直す前に送り先で確かめてください' : '');
+      refreshConfirm();
+      return;
+    }
     // 同じ名前のデータが送信待ちなら、前のものを外すかを、この画面で選んでもらう
     if (b.error === 'name-taken') { taken = name; failure = null; refreshConfirm(); return; }
+    if (b.error === 'file-exists') { overwrite = true; failure = '確かめている間に、同じ名前のファイルが書き出し先にできました。上書きしてよいか確かめてください'; refreshConfirm(); return; }
     failure = b.blockers ? b.blockers.join(' / ') : REASON[b.error] ||
-      (b.upload ? `送り先が STATUS=${b.upload.status} を返しました ${b.upload.statusText || ''}` : b.message || err.message);
+      (b.upload ? `送り先が受け付けませんでした: ${STATUS_MEANING[b.upload.status % 256] || 'その他'}(STATUS=${b.upload.status}${b.upload.statusText ? ' ' + b.upload.statusText : ''})` : b.message || err.message);
     refreshConfirm();
+    refresh();
     return;
   } finally {
-    await refresh();
+    busy = false;
   }
+  // 成功: 画面を閉じてから、一覧と詳細を読み直す(送った記録・状態を詳細に出す)
   $('confirm').close();
+  await refresh();
+  if (selected) await select(selected);
 };
 
 // ---- はい・いいえを聞く画面 ----
@@ -656,11 +767,16 @@ function ask(title, text, ok) {
     $('ask').oncancel = () => resolve(false);
   });
 }
-$('btnUnqueue').onclick = async () => { await api(`/api/jobs/${current.id}/unqueue`, { method: 'POST', body: '{}' }); await refresh(); };
+$('btnUnqueue').onclick = async () => {
+  // 加工機へ渡している途中のものは取り消せない(断られた理由を出す)
+  try { await api(`/api/jobs/${current.id}/unqueue`, { method: 'POST', body: '{}' }); } catch (err) { const b = err.body || {}; alert(REASON[b.error] || b.message || err.message); }
+  await refresh();
+};
 $('btnDelete').onclick = async () => {
   const label = current.name || `名前なし (JOB ${current.job || 'なし'})`;
-  if (!await ask('受信データを削除する', `${label} の受信データを削除します。元に戻せません。`, '削除する')) return;
-  await api('/api/jobs/' + current.id, { method: 'DELETE' });
+  const queuedNote = current.status === 'queued' ? '送信待ちです。消すと、加工機が求めても渡せなくなります。' : '';
+  if (!await ask('受信データを削除する', `${queuedNote}${label} の受信データを削除します。元に戻せません。`, '削除する')) return;
+  try { await api('/api/jobs/' + current.id, { method: 'DELETE' }); } catch (err) { const b = err.body || {}; alert(REASON[b.error] || b.message || err.message); await refresh(); return; }
   shapes.delete(current.id);
   selected = current = null;
   await refresh();
@@ -668,13 +784,17 @@ $('btnDelete').onclick = async () => {
 
 // ---- 送受信の記録 ----
 const EVENT = {
-  started: '起動', connected: '接続', disconnected: '切断', initialized: '初期化', received: '受信', sent: '送信',
+  started: '起動', connected: '接続', disconnected: '切断', 'local-connect': '加工機へつなげない', 'clock-skew': 'PC の時計のずれ', 'purge-held': '古すぎて消さなかった', initialized: '初期化', received: '受信', sent: '送信',
   queued: '送信待ちにした', unqueued: '送信待ちを取り消した', deleted: '削除', 'job-complete': '作業完了の知らせ',
   maintenance: '機器の状態', download: '要求に応えられず', 'unsupported-request': '対応していない要求', 'no-req': '正しくないパケット',
-  rejected: '接続を断った', link: '通信のエラー', session: 'セッションのエラー', upload: '受け取れず', web: '画面のエラー',
+  rejected: '接続を断った', link: '通信のエラー', session: 'セッションのエラー', upload: '送り先へ送れず・受け取れず', web: '画面のエラー',
   'queue-blocked': '送信待ちにできず', 'send-blocked': '送り出せず', 'sent-not-recorded': '送ったが送信済みを記録できず',
-  exported: '共有フォルダへ書き出した', uploaded: '送り先へ送った', imported: 'フォルダから取り込んだ', 'import-failed': '取り込めず',
-  'import-move': '取り込んだファイルを移せず', purged: '保存期間を過ぎたので削除', 'autoconnect-ignored': 'オートコネクトを断った', autoconnect: 'オートコネクトのエラー',
+  exported: '共有フォルダへ書き出した', uploaded: '送り先への送信(結果は STATUS)', 'upload-unconfirmed': '送り先に届いたか分からない', imported: 'フォルダから取り込んだ', 'import-failed': '取り込めず',
+  'import-retry': '取り込みをやり直す', import: '取り込みのエラー', purged: '保存期間を過ぎたので削除', 'autoconnect-ignored': 'オートコネクトを断った', autoconnect: 'オートコネクトのエラー',
+  'purged-log': '保存期間を過ぎた記録を削除', 'purged-import': '保存期間を過ぎた取り込み元を削除', 'purged-orphan': '索引に無いファイルを削除',
+  'purged-temp': '書き出しの一時ファイルを削除', 'purged-retry': '消せなかったファイルを削除', 'delete-failed': 'ファイルを消せず',
+  'purge-failed': '保存期間の処理の失敗', 'index-recovered': '索引を 1 つ前のものから戻した', 'unqueued-by-recovery': '索引を戻したので送信待ちから外した',
+  'download-unconfirmed': '受け取ったか分からず送信待ちに戻した', 'download-released': '送信待ちに戻した', uncaught: '止まった', unhandled: '捕まえていない失敗',
   ext: '拡張', 'ext-send': '拡張が送る項目を変えた', 'ext-error': '拡張のエラー',
 };
 let lastLogJson = '';
@@ -683,7 +803,7 @@ async function loadLog() {
   const json = JSON.stringify(rows);
   if (json === lastLogJson) return;
   lastLogJson = json;
-  $('log').innerHTML = rows.slice().reverse().map(r => `<li class="${esc(r.level)}"><span class="t">${esc(fmtTime(r.at))}</span><span class="ev">${esc(EVENT[r.event] || r.event)}</span> ${esc(r.job || '')}
+  $('log').innerHTML = rows.map(r => `<li class="${esc(r.level)}"><span class="t">${esc(fmtTime(r.at))}</span><span class="ev">${esc(EVENT[r.event] || r.event)}</span> ${esc(r.job || '')}
     <span class="d">${esc([r.peer, r.result, r.detail].filter(Boolean).join(' ・ '))}</span></li>`).join('') || '<li class="muted">記録はまだありません。</li>';
 }
 
@@ -717,9 +837,16 @@ async function loadStatus() {
 }
 
 // ---- 読み直し ----
+let down = false, listTag = null;
 async function refresh() {
   try {
-    const list = await api('/api/jobs');
+    // 一覧が変わっていなければ(304)、読み直さない
+    const res = await fetch('/api/jobs', { headers: { 'X-VCA-Hub': '1', ...(listTag ? { 'If-None-Match': listTag } : {}) } });
+    if (!res.ok && res.status !== 304) throw new Error(String(res.status));
+    const list = res.status === 304 ? entries : await res.json();
+    if (res.status !== 304) listTag = res.headers.get('ETag');
+    // 起動し直した後は、書き出し先・送り先・拡張などの設定が変わっていることがあるので読み直す
+    if (down) { down = false; $('spec').classList.remove('down'); try { await loadStatus(); } catch { /* 次の回に */ } }
     const json = JSON.stringify(list);
     if (json !== lastListJson) {
       lastListJson = json;
@@ -734,6 +861,7 @@ async function refresh() {
     renderSpec();
     await loadLog();
   } catch (err) {
+    down = true;
     $('spec').textContent = 'vca-hub に接続できません。start.bat の窓が開いているか確かめてください(' + err.message + ')';
     $('spec').classList.add('down');
   }

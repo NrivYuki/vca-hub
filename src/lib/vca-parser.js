@@ -542,6 +542,8 @@
   function parse(text, opts) {
     const records = [], rec = {}, all = {}, traces = [], datasets = [], proposals = [];
     const errors = [], warnings = [], unknown = [], blockLines = {};
+    // unknown に入れたラベル(重なりの確かめを配列の先頭から探すと、違うラベルが多い本文で手間が行数の 2 乗になるため)
+    const unknownSeen = new Set();
     let ds = null, trace = null;   // 開いているデータセット、直前の TRCFMT
     let openBlock = null;          // 直前の PROCBLK のブロック番号(ブロックの外のレコードが来たら閉じる)
     const brokenBlocks = new Set();
@@ -636,7 +638,7 @@
       records.push(r);
       if (label.length > MAX_LABEL) warnings.push(`ラベル ${label} が ${MAX_LABEL} 文字を超えています`);
       const def = recordDef(label);
-      if (!def && !vendor) { if (unknown.indexOf(label) < 0) unknown.push(label); }
+      if (!def && !vendor && !unknownSeen.has(label)) { unknownSeen.add(label); unknown.push(label); }
       if (def && def.dep !== undefined && def.dep !== null) {
         warnings.push(`${label} は廃止されたレコードです` + (def.dep ? `(後継: ${def.dep})` : ''));
       }

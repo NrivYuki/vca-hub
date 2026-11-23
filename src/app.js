@@ -57,7 +57,8 @@ function alive(pid) {
     const cp = require('node:child_process');
     const out = process.platform === 'win32'
       ? cp.execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, windowsHide: true })
-      : cp.execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', timeout: 5000 });
+      // comm は、Node.js 24 ではメインのスレッドの名前(MainThread)になることがあるので、コマンドの行を見る
+      : cp.execFileSync('ps', ['-p', String(pid), '-o', 'comm=,args='], { encoding: 'utf8', timeout: 5000 });
     return /node/i.test(out);
   } catch { return true; }
 }
